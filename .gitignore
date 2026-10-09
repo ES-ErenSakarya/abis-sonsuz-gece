@@ -1,0 +1,16 @@
+node_modules/
+.project_id
+.github_repo
+.env
+.env.*
+.vercel/
+attachments/
+screenshots/
+artifacts/
+unreal/
+launcher/
+*.zip
+*.glb
+*.exe
+*.pdb
+*.mp4

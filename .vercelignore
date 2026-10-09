@@ -1,0 +1,13 @@
+node_modules
+.git
+.vercel
+attachments
+screenshots
+artifacts
+launcher
+unreal
+*.zip
+*.glb
+*.mp4
+*.pdb
+*.exe
