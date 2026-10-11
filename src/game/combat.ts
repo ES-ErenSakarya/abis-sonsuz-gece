@@ -63,6 +63,8 @@ function boomMesh() {
   return { mesh, life: 1, light, ring: ringMat };
 }
 
+type Rain = { mesh: THREE.Object3D; y: number; vy: number; life: number; live: boolean };
+
 export function createCombat(scene: THREE.Scene) {
   const root = new THREE.Group();
   const arrows = Array.from({ length: 8 }, () => {
@@ -79,6 +81,11 @@ export function createCombat(scene: THREE.Scene) {
     const boom = boomMesh();
     root.add(boom.mesh);
     return boom;
+  });
+  const rains: Rain[] = Array.from({ length: 18 }, () => {
+    const mesh = arrowMesh();
+    root.add(mesh);
+    return { mesh, y: 0, vy: 0, life: 0, live: false };
   });
   scene.add(root);
 
@@ -136,6 +143,19 @@ export function createCombat(scene: THREE.Scene) {
     fireBolt(origin: THREE.Vector3, dir: THREE.Vector3, dmg: number, crit: boolean, home = "") {
       launch(bolts, origin, dir, 16, dmg, crit, home);
     },
+    rain(x: number, z: number) {
+      const down = _dir.set(0, -1, 0);
+      for (let i = 0; i < 14; i++) {
+        const shot = rains.find((row) => !row.live) ?? rains[i % rains.length]!;
+        shot.live = true;
+        shot.life = 0;
+        shot.y = 6.5 + Math.random() * 4.5;
+        shot.vy = 8 + Math.random() * 5;
+        shot.mesh.visible = true;
+        shot.mesh.position.set(x + (Math.random() - 0.5) * 7.2, shot.y, z + (Math.random() - 0.5) * 7.2);
+        shot.mesh.quaternion.setFromUnitVectors(_up, down);
+      }
+    },
     tick(dt: number, targets: ShotTarget[], onHit: (id: string, dmg: number, crit: boolean, x: number, y: number, z: number) => void) {
       const step = (shot: Shot) => {
         if (!shot.live) return;
@@ -182,6 +202,16 @@ export function createCombat(scene: THREE.Scene) {
       };
       for (const shot of arrows) step(shot);
       for (const shot of bolts) step(shot);
+      for (const shot of rains) {
+        if (!shot.live) continue;
+        shot.life += dt;
+        shot.y -= shot.vy * dt;
+        shot.mesh.position.y = shot.y;
+        if (shot.y <= 0.12 || shot.life > 1.8) {
+          shot.live = false;
+          shot.mesh.visible = false;
+        }
+      }
       for (const boom of booms) {
         if (boom.life >= 1) continue;
         boom.life += dt / 0.36;

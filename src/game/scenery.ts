@@ -1172,6 +1172,7 @@ export function createWeather(scene: THREE.Scene) {
 	const seasonColor = new THREE.Color();
 	const nextColor = new THREE.Color();
 	let painted = -1;
+	let dressed = -1;
 	return {
 		update(dt: number, t: number, x: number, z: number) {
 			const climate = studioClimate();
@@ -1233,8 +1234,11 @@ export function createWeather(scene: THREE.Scene) {
 				}
 				mesh.instanceMatrix.needsUpdate = true;
 			};
-			paintSpread(leaves, leafSpots, 2, 0.03, true, season === 2);
-			paintSpread(flowers, flowerSpots, season === 1 ? 1 : 0, 0.05, false, season === 0 || season === 1);
+			if (dressed !== season) {
+				dressed = season;
+				paintSpread(leaves, leafSpots, 2, 0.03, true, season === 2);
+				paintSpread(flowers, flowerSpots, season === 1 ? 1 : 0, 0.05, false, season === 0 || season === 1);
+			}
 			for (const cloud of clouds) {
 				const span = 260;
 				const drift = (cloud.userData.base as number) + t * (cloud.userData.speed as number);

@@ -1,3 +1,4 @@
+import { arenaFloor } from "@/game/dungeon";
 export type Box = { minX: number; maxX: number; minZ: number; maxZ: number };
 export type Circle = { x: number; z: number; r: number };
 
@@ -322,6 +323,8 @@ export function bridgeDeckY(along: number) {
 }
 
 export function groundY(x: number, z: number) {
+  const floor = arenaFloor();
+  if (floor && Math.hypot(x - floor.x, z - floor.z) <= floor.r + 0.35) return floor.y;
   if (onPier(x, z)) return PIER_TOP + pierLift;
   const h = heightFn ? heightFn(x, z) : 0;
   if (Math.hypot(x - LAKE.x, z - LAKE.z) < LAKE.r - 0.15) return Math.max(h, 0.07);

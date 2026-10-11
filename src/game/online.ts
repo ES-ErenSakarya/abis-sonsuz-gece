@@ -76,6 +76,12 @@ export function upsertRemote(id: string, body: BodyState) {
     remotes.set(id, { ...body, tx: body.x, tz: body.z, tyaw: body.yaw });
     return;
   }
+  const jump = Math.hypot(body.x - prev.x, body.z - prev.z);
+  if (jump > 18) {
+    prev.x = body.x;
+    prev.z = body.z;
+    prev.yaw = body.yaw;
+  }
   prev.tx = body.x;
   prev.tz = body.z;
   prev.tyaw = body.yaw;
@@ -115,7 +121,7 @@ export function parseBody(data: unknown): BodyState | null {
   if (row.kind !== "body") return null;
   const x = num(row, "x");
   const z = num(row, "z");
-  if (Math.abs(x) > 200 || Math.abs(z) > 200) return null;
+  if (Math.abs(x) > 4000 || Math.abs(z) > 4000) return null;
   const nick = typeof row.nick === "string" ? row.nick.replace(/\s+/g, " ").slice(0, 16) : "Gezgin";
   return {
     nick: nick || "Gezgin",

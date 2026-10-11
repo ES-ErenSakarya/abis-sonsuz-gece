@@ -169,18 +169,28 @@ function createNeonSql(): Promise<Sql> {
 }
 
 async function createPgliteSql(): Promise<Sql> {
-  // Embedded Postgres, imported on demand so it never loads on the Neon path.
-  // One in-memory instance per process, shared across HMR module instances, so
-  // data survives source edits (it resets on dev-server restart).
+  // Embedded Postgres. The live preview keeps it on disk so accounts survive a
+  // refresh. Deployed apps use Neon (DATABASE_URL). `vite preview` stays in
+  // memory so it does not fight the dev server for the same data directory.
   globalRef.__pgliteInstance__ ??= (async () => {
     const { PGlite } = await import("@electric-sql/pglite");
-    const pg = new PGlite({
-      parsers: {
-        [OID_INT8]: Number,
-        [OID_DATE]: identity,
-        [OID_INTERVAL]: identity,
-      },
-    });
+    const parsers = {
+      [OID_INT8]: Number,
+      [OID_DATE]: identity,
+      [OID_INTERVAL]: identity,
+    };
+    const preview = process.argv.some((arg) => arg === "preview");
+    let dataDir: string | undefined;
+    if (!process.env.VERCEL && !preview) {
+      try {
+        const { mkdirSync } = await import("node:fs");
+        dataDir = "/workspace/.data/pglite";
+        mkdirSync(dataDir, { recursive: true });
+      } catch {
+        dataDir = undefined;
+      }
+    }
+    const pg = dataDir ? new PGlite(dataDir, { parsers }) : new PGlite({ parsers });
     await pg.waitReady;
     await pg.exec(
       "create table if not exists _migrations (name text primary key, applied_at timestamptz not null default now())",

@@ -29,6 +29,7 @@ export interface SignalRow {
 export interface RtcPollResponse {
   peers: PeerRow[];
   signals: SignalRow[];
+  kicked?: boolean;
 }
 
 export interface PeerInfo {
@@ -52,6 +53,8 @@ export interface P2PRoomOptions {
   onMessage?: (from: string, data: unknown, channel: "state" | "reliable") => void;
   /** Fires once, on the first successful signaling poll (registration). */
   onConnected?: () => void;
+  /** Another session of the same account took this seat. */
+  onKicked?: () => void;
 }
 
 interface PeerSlot {
@@ -198,6 +201,11 @@ export class P2PRoom {
     if (!res.ok) throw new Error(`signaling poll failed: ${res.status}`);
     const body = (await res.json()) as RtcPollResponse;
     if (this.closed) return;
+    if (body.kicked) {
+      this.opts.onKicked?.();
+      this.close();
+      return;
+    }
     if (!this.everPolled) {
       this.everPolled = true;
       this.opts.onConnected?.();

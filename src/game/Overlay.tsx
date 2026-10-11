@@ -8,15 +8,100 @@ import { armTouchHit } from "@/game/touchHit";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { AuthScreens, CharacterScreens, leaveToCharacters } from "@/game/AccountScreens";
 import { NetLive } from "@/game/NetLive";
-import { answerDuel, answerSocial, addTradeItem, blockMate, closeTrade, endDuel, leaveParty, offerDuel, offerSocial, queuePick, removeFriend, setTradeOk, subscribeTarget, targetSnapshot } from "@/game/target";
-import { chatFocused, chatSnapshot, sendChat, sendWhisper, setChatFocus, setWhisper, subscribeChat, whisperTarget } from "@/game/chat";
-import { lootHint, queueGroundDrop, subscribeField, takeNearLoot } from "@/game/field";
+import { answerDuel, answerSocial, addTradeItem, blockMate, closeTrade, endDuel, leaveParty, offerDuel, offerSocial, offerTradeGold, queuePick, removeFriend, setTradeOk, subscribeTarget, targetSnapshot } from "@/game/target";
+import { chatFocused, chatOpen, chatSnapshot, mailSnapshot, openMail, sendChat, sendWhisper, setChatFocus, setWhisper, subscribeChat, systemSay, whisperTarget } from "@/game/chat";
+import { askStallBuy, chestView, closeChest, closeStallView, fieldRev, lootHint, marketBoards, openNearChest, queueGroundDrop, stallViewId, subscribeField, takeChestItem } from "@/game/field";
 import { captureSave, readCarry, setCarry } from "@/game/rpg";
-import { saveCharacter } from "@/game/account";
+import { saveCharacter, leaderboard, type BoardRow } from "@/game/account";
+import { dungeonNow, subscribeDungeon } from "@/game/dungeon";
 import { useSession } from "@/game/session";
-import { CATALOG, CLASS_TREES, className, displayName, ENHANCE, GATE_COST, itemStats, matForPlus, MENTORS, openBagCount, PAGE_SIZE, questGuide, SKILL_MAX, skillCdLeft, skillPreview, skillTier, SLOT_LABEL, STAT_HINT, STAT_LABEL, sumStats, upgradeChance, useRpg, weaponStyleOf, BAZAAR_OFFERS, CRAFTS, type CharTab, type EquipSlot, type Item, type ShopKind, type StatKey } from "@/game/rpg";
+import { CATALOG, CLASS_TREES, className, displayName, ENHANCE, GATE_COST, giverLabel, itemStats, matForPlus, MENTORS, offerForNpc, activeForNpc, readyForNpc, nextStoryRow, questBoardRow, questGiver, questGuide, questMapFor, questMatchesNpc, openBagCount, PAGE_SIZE, rankOf, saleGold, SKILL_MAX, skillCdLeft, skillCdTotal, skillPreview, skillTier, SLOT_LABEL, STAT_HINT, STAT_LABEL, sumStats, upgradeChance, useRpg, weaponStyleOf, CRAFTS, type CharTab, type EquipSlot, type Item, type NearKind, type ShopKind, type StatKey } from "@/game/rpg";
+let exitHandle = 0;
+function beginExit(kind: "char" | "out") {
+  window.clearInterval(exitHandle);
+  let left = 5;
+  const word = kind === "char" ? "Karakter Değiştiriliyor" : "Çıkış yapılıyor";
+  const hp0 = useRpg.getState().hp;
+  const started = performance.now();
+  systemSay(`${word} ${left}`);
+  exitHandle = window.setInterval(() => {
+    const now = useRpg.getState();
+    if (now.down || now.hp < hp0 - 0.4) {
+      window.clearInterval(exitHandle);
+      systemSay("Geri sayım iptal");
+      return;
+    }
+    const next = 5 - Math.floor((performance.now() - started) / 1000);
+    if (next <= 0) {
+      window.clearInterval(exitHandle);
+      if (kind === "char") leaveToCharacters();
+      else void signOut("/");
+      return;
+    }
+    if (next !== left) {
+      left = next;
+      systemSay(`${word} ${left}`);
+    }
+  }, 200);
+}
+
+function EdgeIcon({ kind }: { kind: "stat" | "skill" | "bag" | "friend" | "gear" | "board" | "mail" }) {
+  const common = { fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  if (kind === "stat") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 19V10M12 19V5M19 19v-7" {...common} />
+      </svg>
+    );
+  }
+  if (kind === "skill") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3.5 14.4 9l5.6.4-4.3 3.6 1.4 5.5L12 15.8 6.9 18.5 8.3 13 4 9.4 9.6 9Z" {...common} />
+      </svg>
+    );
+  }
+  if (kind === "bag") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 8h10l-1 12H8L7 8Z" {...common} />
+        <path d="M9 8V6.5A3 3 0 0 1 12 3.5 3 3 0 0 1 15 6.5V8" {...common} />
+      </svg>
+    );
+  }
+  if (kind === "friend") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="9" cy="9" r="2.4" {...common} />
+        <circle cx="16" cy="10" r="2" {...common} />
+        <path d="M4.5 18.5c.6-2.4 2.4-3.6 4.5-3.6s3.9 1.2 4.5 3.6M14 15.2c1.4-.3 2.8.2 3.6 1.6" {...common} />
+      </svg>
+    );
+  }
+  if (kind === "mail") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 7h16v10H4zM4 7l8 6 8-6" {...common} />
+      </svg>
+    );
+  }
+  if (kind === "board") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 20h10M8 16h8M9 4h6l1 8H8L9 4Z" {...common} />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" {...common} />
+      <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18" {...common} />
+    </svg>
+  );
+}
+import { effectiveGfx, GFX_PRESETS, loadGfx, readGfx, subscribeGfx, writeGfx, type GfxPreset } from "@/game/settings";
+import { loadMusic, readMusic, subscribeMusic, writeMusic } from "@/game/audio";
 import { signOut } from "@/lib/auth/client";
-import { loadGfx, readGfx, subscribeGfx, writeGfx } from "@/game/settings";
 import { DUNGEON_BOUND, HOUSES, MAP_MARKS, REALMS, VILLAGE_BOUND, realmAt, realmGate, realmHerald } from "@/game/world";
 import {
   copySelected,
@@ -89,18 +174,6 @@ function clamp(v: number, min: number, max: number) {
 
 const MOVE_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
 
-function pocket(item: Item) {
-  const bag = useRpg.getState().bag.slice();
-  const hole = bag.findIndex((slot) => slot == null);
-  if (hole < 0) {
-    queueGroundDrop(item);
-    useRpg.setState({ toast: "Çanta dolu" });
-    return;
-  }
-  bag[hole] = item;
-  useRpg.setState({ bag, toast: `${item.name} alındı` });
-}
-
 let keepCarry = false;
 let dragSold = false;
 
@@ -146,8 +219,9 @@ function sellDragged(raw: string) {
     return;
   }
   const name = item.name;
+  const gold = saleGold(item);
   const yes = sell;
-  openAsk(`"${name}"\nEşyayı satmak istediğine emin misin?`, yes);
+  openAsk(`"${name}"\n${gold} altına satmak istiyor musun?`, yes);
 }
 
 function dropBag(index: number) {
@@ -346,8 +420,33 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
   const bootDone = bootGiveUp || !sessionWaiting;
   const activeId = useSession((s) => s.activeId);
   const nick = useRpg((s) => s.nick);
+  const level = useRpg((s) => s.level);
+  useEffect(() => {
+    const s = useRpg.getState();
+    if (s.level >= 70) return;
+    if (!s.quests.some((quest) => quest.id === "y-plus10" && !quest.claimed)) return;
+    useRpg.setState({
+      quests: s.quests.filter((quest) => quest.id !== "y-plus10" || quest.claimed),
+      toast: "Artı On görevi 70. seviyede verilir",
+    });
+  }, [level]);
+  useEffect(() => {
+    const s = useRpg.getState();
+    let changed = false;
+    const fix = (item: Item | null) => {
+      if (!item || item.id !== "kazma" || (item.level === 8 && item.req === 8)) return item;
+      changed = true;
+      return { ...item, level: 8, req: 8 };
+    };
+    const bag = s.bag.map(fix);
+    const equipped = { ...s.equipped };
+    for (const key of Object.keys(equipped) as (keyof typeof equipped)[]) equipped[key] = fix(equipped[key]);
+    if (changed) useRpg.setState({ bag, equipped });
+  }, []);
   const [mapOpen, setMapOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
+  const [boardOpen, setBoardOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [questHud, setQuestHud] = useState(true);
   const [menu, setMenu] = useState<null | "root" | "opts">(null);
   const menuRef = useRef(menu);
@@ -469,16 +568,30 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
       if (e.code === "KeyB") useRpg.getState().showChar("quests");
       if (e.code === "KeyM") setMapOpen((open) => !open);
       if (e.code === "KeyN") setFriendsOpen((open) => !open);
+      if (e.code === "KeyH" && (e.ctrlKey || e.metaKey)) {
+        useRpg.getState().toggleRide();
+        e.preventDefault();
+        return;
+      }
       if (e.code === "KeyH") useRpg.getState().toggleRide();
+      if (e.code === "F1") {
+        useRpg.getState().drinkPotion("hp");
+        e.preventDefault();
+      }
+      if (e.code === "F2") {
+        useRpg.getState().drinkPotion("mp");
+        e.preventDefault();
+      }
       if (e.code.startsWith("Digit")) {
         const slot = Number(e.code.slice(5)) - 1;
-        const id = useRpg.getState().hotbar[slot];
-        if (id) useRpg.getState().castSkill(id);
+        if (slot >= 0 && slot < 8) {
+          const id = useRpg.getState().hotbar[slot];
+          if (id) useRpg.getState().castSkill(id);
+        }
       }
       if (e.code === "KeyE") {
         const here = readSim();
-        const found = takeNearLoot(here.x, here.z);
-        if (found) pocket(found);
+        openNearChest(here.x, here.z);
       }
     };
     const up = (e: KeyboardEvent) => {
@@ -612,7 +725,7 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
       onWheel={onWheel}
     >
       {!playing ? <BootScreen done={bootDone} sessionWaiting={sessionWaiting} sceneReady={sceneReady} worldReady={ready} /> : null}
-      {playing && activeId ? <NetLive nick={nick} /> : null}
+      {playing && activeId ? <NetLive key={user?.id || nick || "oyuncu"} nick={nick} account={user?.id} /> : null}
       {playing ? (
         <>
           <div id="world-layer" className="world-layer">
@@ -631,19 +744,20 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
             <PartyWindow />
             <WorldMap zone={zone} big={mapOpen} onToggle={() => setMapOpen((open) => !open)} />
             {friendsOpen ? <FriendsWindow onClose={() => setFriendsOpen(false)} /> : null}
+            {guideOpen ? <GuideBook onClose={() => setGuideOpen(false)} /> : null}
+            {boardOpen ? <BoardWindow onClose={() => setBoardOpen(false)} /> : null}
+            <DungeonBanner />
             <Prompt />
             <ToolHud />
-            <QuestTracker open={questHud} />
+            <div className="hud-side pointer-events-none absolute z-10">
+              <QuestTracker open={questHud} />
+              <MailNotes />
+            </div>
             <Toast />
             <Hurt />
-            <button
-              type="button"
-              data-ui
-              className="hud-char pointer-events-auto absolute z-30 rounded-md border border-border bg-surface/90 px-3 py-2 text-sm text-fg"
-              onClick={() => setMenu((open) => (open ? null : "root"))}
-            >
-              Ayarlar
-            </button>
+            <WelcomeNote />
+            <NpcChoice />
+            <EdgeBar onSettings={() => setMenu((open) => (open ? null : "root"))} onFriends={() => setFriendsOpen(true)} onBoard={() => setBoardOpen((open) => !open)} onGuide={() => setGuideOpen(true)} />
             <CreativeDock />
             {menu && !friendsOpen ? <SettingsMenu mode={menu} onMode={setMenu} onClose={() => setMenu(null)} onFriends={() => setFriendsOpen(true)} /> : null}
             <SelectBar />
@@ -651,6 +765,8 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
             <WhisperDock />
             <QuickButtons />
             <Panels />
+            <ChestWindow />
+            <StallBrowse />
             <CenterAsk />
             <DeathCard />
             <MapLoad />
@@ -713,6 +829,7 @@ function CreativeDock() {
   const view = editView();
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const [listPage, setListPage] = useState(0);
   if (!creative) return null;
   const pose = view.pose;
   const yawDeg = pose ? (pose.yaw * 180) / Math.PI : 0;
@@ -733,7 +850,7 @@ function CreativeDock() {
         Yerleşim
       </button>
       {open ? (
-        <div className="mt-2 max-h-[70vh] overflow-auto rounded-md border border-gold bg-bg/95 p-2 text-fg shadow-lg">
+        <div className="mt-2 overflow-hidden rounded-md border border-gold bg-bg/95 p-2 text-fg shadow-lg">
           <p className="text-xs text-muted">Sol tuş araziyi boyar. Sağ tık seçer. Ok taşır, Q/E döndürür, J zıplar. Ctrl+Z geri alır.</p>
           <div className="mt-2 flex flex-wrap gap-1">
             {["hepsi", "bina", "npc", "ağaç", "kopya"].map((kind) => (
@@ -790,13 +907,14 @@ function CreativeDock() {
           </div>
           <StudioBar />
           <input className="mt-2 w-full rounded border border-border bg-bg px-2 py-1 text-xs" placeholder="Ara" value={filter} onChange={(e) => setFilter(e.target.value)} />
-          <div className="mt-1 max-h-40 overflow-auto">
-            {shown.map((row) => (
+          <div className="mt-1 overflow-hidden">
+            {shown.slice(listPage * 6, listPage * 6 + 6).map((row) => (
               <button key={row.id} type="button" className={`block w-full truncate px-1 py-1 text-left text-xs ${view.selected === row.id ? "text-gold" : "text-fg"}`} onClick={() => selectEditable(row.id)}>
                 {row.label}
               </button>
             ))}
           </div>
+          <PageRow page={Math.min(listPage, Math.max(0, Math.ceil(shown.length / 6) - 1))} pages={Math.max(1, Math.ceil(shown.length / 6))} onPage={setListPage} />
         </div>
       ) : null}
     </div>
@@ -1050,20 +1168,81 @@ function TouchCluster() {
           {label}
         </button>
       </div>
-      <div className="hand-tools">
-        <button type="button" data-ui className="hand-tool" onPointerDown={(e) => e.stopPropagation()} onClick={() => useRpg.getState().showChar("stats")}>
-          Statü
-        </button>
-        <button type="button" data-ui className="hand-tool" onPointerDown={(e) => e.stopPropagation()} onClick={() => useRpg.getState().showChar("skills")}>
-          Yetenek
-        </button>
-        <button type="button" data-ui className="hand-tool" onPointerDown={(e) => e.stopPropagation()} onClick={() => useRpg.getState().toggleInv()}>
-          Çanta
-        </button>
-        <button type="button" data-ui className="hand-tool" onPointerDown={(e) => e.stopPropagation()} onClick={() => useRpg.getState().showChar("quests")}>
-          Görev
-        </button>
-      </div>
+    </div>
+  );
+}
+
+function EdgeBar({ onSettings, onFriends, onBoard, onGuide }: { onSettings: () => void; onFriends: () => void; onBoard: () => void; onGuide: () => void }) {
+  const item = (kind: "stat" | "skill" | "bag" | "friend", label: string, run: () => void, round = false) => (
+    <button type="button" data-ui className={round ? "edge-btn is-round" : "edge-btn"} aria-label={label} title={label} onPointerDown={(e) => e.stopPropagation()} onClick={run}>
+      <EdgeIcon kind={kind === "stat" ? "stat" : kind === "skill" ? "skill" : kind === "bag" ? "bag" : "friend"} />
+    </button>
+  );
+  return (
+    <div className="edge-bar" data-ui>
+      {item("stat", "Statü", () => useRpg.getState().showChar("stats"))}
+      {item("skill", "Yetenekler", () => useRpg.getState().showChar("skills"))}
+      {item("bag", "Envanter", () => useRpg.getState().toggleInv())}
+      <button type="button" data-ui className="edge-btn" aria-label="Mesajlar" title="Mesajlar" onPointerDown={(e) => e.stopPropagation()} onClick={onGuide}>
+        <EdgeIcon kind="mail" />
+      </button>
+      {item("friend", "Dostlar", onFriends)}
+      <button type="button" data-ui className="edge-btn" aria-label="Sıralama" title="Sıralama" onPointerDown={(e) => e.stopPropagation()} onClick={onBoard}>
+        <EdgeIcon kind="board" />
+      </button>
+      <button type="button" data-ui className="edge-btn is-round" aria-label="Ayarlar" title="Ayarlar" onPointerDown={(e) => e.stopPropagation()} onClick={onSettings}>
+        <EdgeIcon kind="gear" />
+      </button>
+    </div>
+  );
+}
+
+function WelcomeNote() {
+  const greeted = useRpg((s) => s.greeted);
+  const playing = useHud((s) => s.playing);
+  const cls = useRpg((s) => s.classId);
+  if (!playing || greeted) return null;
+  return (
+    <div className="welcome-note" data-ui onPointerDown={(e) => e.stopPropagation()}>
+      <p className="text-gold">Merhaba {className(cls)},</p>
+      <p>Köye hoş geldin!</p>
+      <p>Burası bir zamanlar huzurun hüküm sürdüğü, ancak kadim mühürlerin kırılmasıyla gölgelerin istilasına uğrayan Abis topraklarının sığınağı.</p>
+      <p>Yolculuğuna başlamadan önce şu birkaç hususu aklında tut:</p>
+      <p>- Köydeki Muhafız ile görüşerek ilk görevini al ve bu acımasız dünyada hayatta kalmak için temel ekipmanlarını kuşan.</p>
+      <p>- Etrafındaki diğer savaşçılarla güçlerini birleştir; zindanların derinliklerinde tek başına yürümek cesaret değil, deliliktir.</p>
+      <p>- Savaşarak tecrübe kazan, yeteneklerini geliştir ve efsanevi silahlara hayat ver.</p>
+      <p>Efsaneler, karanlığı sarsacak kahramanın geleceğini fısıldıyordu. O kahraman sen misin?</p>
+      <button type="button" className="welcome-go" onClick={() => {
+        useRpg.setState({ greeted: true });
+        const id = useSession.getState().activeId;
+        if (id) void saveCharacter({ data: { id, save: captureSave() } }).catch(() => undefined);
+      }}>
+        Köye Giriş Yap
+      </button>
+    </div>
+  );
+}
+
+function NpcChoice() {
+  const ask = useRpg((s) => s.npcAsk);
+  if (!ask) return null;
+  return (
+    <div className="npc-choice" data-ui onPointerDown={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => {
+          const now = useRpg.getState();
+          useRpg.setState({ npcAsk: null, shop: "guard", boardFor: ask, boardMap: questMapFor(ask, now.mentor), invOpen: false, charOpen: false });
+        }}
+      >
+        Görev
+      </button>
+      <button
+        type="button"
+        onClick={() => useRpg.setState({ npcAsk: null, boardFor: null, boardMap: null, shop: ask as ShopKind, invOpen: true, charOpen: false })}
+      >
+        Mağazayı Aç
+      </button>
     </div>
   );
 }
@@ -1072,11 +1251,11 @@ function Bar({ label, value, max, tone }: { label: string; value: number; max: n
   const pct = Math.max(0, Math.min(100, (value / Math.max(1, max)) * 100));
   return (
     <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5">
-      <span className="text-[10px] tracking-wide text-muted">{label}</span>
-      <span className="h-2 min-w-0 overflow-hidden rounded-sm border border-border bg-bg">
+      <span className="text-[13px] tracking-wide text-muted">{label}</span>
+      <span className="h-5 min-w-0 overflow-hidden rounded-sm border border-border bg-bg">
         <span className={`block h-full ${tone}`} style={{ width: `${pct}%` }} />
       </span>
-      <span className="text-right text-[10px] leading-none tabular-nums text-fg">
+      <span className="text-right text-sm leading-none tabular-nums text-fg">
         {Math.ceil(value)}/{Math.ceil(max)}
       </span>
     </div>
@@ -1091,47 +1270,23 @@ function Vitals() {
   const sta = useRpg((s) => s.sta);
   const staMax = useRpg((s) => s.staMax);
   const level = useRpg((s) => s.level);
-  const xp = useRpg((s) => s.xp);
-  const xpTo = useRpg((s) => s.xpTo);
-  const [xpTip, setXpTip] = useState(false);
-  const progress = (xp / Math.max(1, xpTo)) * 4;
-  const pct = Math.round((xp / Math.max(1, xpTo)) * 100);
+  const fame = useRpg((s) => s.fame);
+  const rank = rankOf(fame);
   return (
-    <div
-      className="hud-vitals pointer-events-auto absolute z-20"
-      data-xp={Math.floor(xp)}
-      data-xp-to={xpTo}
-      onPointerEnter={() => setXpTip(true)}
-      onPointerLeave={() => setXpTip(false)}
-    >
-      <div className="flex flex-col gap-1 rounded-lg border border-border bg-surface/90 p-2">
+    <div className="hud-vitals pointer-events-auto absolute z-20">
+      <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface/90 p-3">
         <Bar label="CAN" value={hp} max={hpMax} tone="bg-hp" />
         <Bar label="MANA" value={mana} max={manaMax} tone="bg-mp" />
         <Bar label="STA" value={sta} max={staMax} tone="bg-sta" />
-        <div className="relative mt-1 flex items-center gap-2" onMouseEnter={() => setXpTip(true)} onMouseLeave={() => setXpTip(false)}>
-          <span className="grid h-7 min-w-7 place-items-center rounded-md border border-gold/70 px-1 text-[11px] text-gold" title="Seviye">
-            {level}
-          </span>
-          {[0, 1, 2, 3].map((i) => (
-            <Orb key={i} fill={progress - i} />
-          ))}
-          {xpTip ? (
-            <span className="absolute -top-7 left-0 rounded-md border border-gold bg-bg px-2 py-0.5 text-[11px] text-gold">
-              {pct}% · {Math.floor(xp)}/{xpTo}
+        <p className="text-sm text-gold">
+          Seviye {level}
+          {rank ? (
+            <span className={rank.glow ? "rank-name is-glow" : "rank-name"} style={{ color: rank.color }}>
+              {" "}
+              {rank.name}
             </span>
           ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Orb({ fill }: { fill: number }) {
-  const amount = Math.max(0, Math.min(1, fill));
-  return (
-    <div className="xp-orb relative h-7 w-7" data-fill={amount.toFixed(3)} aria-hidden="true">
-      <div className="absolute inset-0 overflow-hidden rounded-full border-2 border-[#c9a15b] bg-[#100e0c]">
-        <div className="absolute inset-x-0 bottom-0 bg-[#e2b45a]" style={{ height: `${amount * 100}%` }} />
+        </p>
       </div>
     </div>
   );
@@ -1177,6 +1332,13 @@ function SelectBar() {
 function SocialHud() {
   const snap = useSyncExternalStore(subscribeTarget, targetSnapshot, targetSnapshot);
   const { sel, duel, social } = snap;
+  const trading = social.phase === "live" && social.act === "trade";
+  useEffect(() => {
+    if (!trading) return;
+    document.documentElement.classList.add("trade-open");
+    if (!useRpg.getState().invOpen) useRpg.setState({ invOpen: true });
+    return () => document.documentElement.classList.remove("trade-open");
+  }, [trading]);
   if (social.phase === "in") {
     const title = social.act === "trade" ? "Ticaret" : social.act === "friend" ? "Dost" : "Grup";
     return (
@@ -1204,7 +1366,7 @@ function SocialHud() {
     return (
       <div
         data-ui
-        className="hud-window pointer-events-auto absolute top-20 left-1/2 z-30 w-[min(40rem,96vw)] -translate-x-1/2 rounded-xl border border-border bg-surface/95 p-3"
+        className="hud-trade hud-window pointer-events-auto absolute z-30 w-[min(22rem,46vw)] rounded-xl border border-border bg-surface/95 p-3"
         onPointerDown={(e) => e.stopPropagation()}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
@@ -1219,10 +1381,23 @@ function SocialHud() {
             Kapat
           </button>
         </div>
-        <p className="mb-2 text-[11px] text-muted">Envanterden eşyayı kendi pencerenin üstüne sürükle. İki taraf da kabul edince takas olur.</p>
+        <p className="mb-2 text-[11px] text-muted">Envanterden eşyayı kendi pencerenin üstüne sürükle. Altın da ekleyebilirsin. İki taraf kabul edince takas olur.</p>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <p className="mb-1 text-xs text-gold">Sen</p>
+            <p className="mb-1 text-xs text-gold">Sen · {trade.mineGold || 0} altın</p>
+            <form
+              className="mb-1 flex gap-1"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const input = (e.currentTarget.elements.namedItem("gold") as HTMLInputElement | null)?.value;
+                offerTradeGold(Number(input || 0));
+              }}
+            >
+              <input name="gold" inputMode="numeric" placeholder="Altın" className="w-20 rounded-md border border-border bg-bg px-2 py-1 text-xs" />
+              <button type="submit" className="rounded-md border border-gold px-2 py-1 text-xs text-gold">
+                Ekle
+              </button>
+            </form>
             <div className="flex flex-col gap-1">
               {trade.mine.length === 0 ? cell(null) : trade.mine.map((item) => <div key={item.uid}>{cell(item)}</div>)}
             </div>
@@ -1235,7 +1410,7 @@ function SocialHud() {
             </button>
           </div>
           <div>
-            <p className="mb-1 text-xs text-gold">{social.nick}</p>
+            <p className="mb-1 text-xs text-gold">{social.nick} · {trade.theirGold || 0} altın</p>
             <div className="flex flex-col gap-1">
               {trade.theirs.length === 0 ? cell(null) : trade.theirs.map((item) => <div key={item.uid}>{cell(item)}</div>)}
             </div>
@@ -1277,24 +1452,32 @@ function ChatDock() {
   const lines = useSyncExternalStore(subscribeChat, chatSnapshot, chatSnapshot);
   const box = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState("");
+  const [, setTick] = useState(0);
   const open = chatFocused();
+  const shown = chatOpen();
   useEffect(() => {
     if (open) box.current?.focus();
   }, [open]);
-  if (!open) return null;
-  const recent = lines.filter((line) => !line.whisper).slice(-4);
+  useEffect(() => {
+    if (!shown || open) return;
+    const timer = window.setInterval(() => setTick((n) => n + 1), 400);
+    return () => window.clearInterval(timer);
+  }, [shown, open]);
+  if (!shown && !open) return null;
+  const recent = lines.filter((line) => !line.whisper).slice(open ? -12 : -5);
   return (
     <div data-ui className="hud-chat pointer-events-auto absolute left-1/2 z-20 -translate-x-1/2" onPointerDown={(e) => e.stopPropagation()}>
       {recent.length > 0 ? (
-        <div className="chat-log mb-1 max-h-24 overflow-hidden rounded-md bg-bg/75 px-2 py-1.5">
+        <div className={`chat-log mb-1 max-h-28 overflow-hidden rounded-md px-2 py-1.5 ${open ? "bg-bg/80" : "bg-bg/35"}`}>
           {recent.map((line) => (
-            <p key={line.id} className="truncate text-xs text-fg">
+            <p key={line.id} className="truncate text-xs text-fg/90">
               <span className="text-muted">{line.nick}: </span>
               {line.text}
             </p>
           ))}
         </div>
       ) : null}
+      {open ? (
       <form
         className="flex gap-1"
         onSubmit={(e) => {
@@ -1321,6 +1504,7 @@ function ChatDock() {
           Yaz
         </button>
       </form>
+      ) : null}
     </div>
   );
 }
@@ -1383,9 +1567,9 @@ function WhisperDock() {
           Kapat
         </button>
       </div>
-      <div className="mb-2 max-h-48 space-y-1 overflow-auto">
+      <div className="mb-2 space-y-1 overflow-hidden">
         {recent.length === 0 ? <p className="text-xs text-muted">Henüz fısıltı yok</p> : null}
-        {recent.map((line) => (
+        {recent.slice(-5).map((line) => (
           <p key={line.id} className="text-sm text-fg">
             <span className="text-gold">{line.nick}: </span>
             {line.text}
@@ -1419,24 +1603,63 @@ function WhisperDock() {
 
 function Hotbar() {
   const hotbar = useRpg((s) => s.hotbar);
+  const pots = useRpg((s) => s.pots);
   const skills = useRpg((s) => s.skills);
   const classId = useRpg((s) => s.classId);
   const base = useRpg((s) => s.base);
   const invested = useRpg((s) => s.invested);
   const equipped = useRpg((s) => s.equipped);
   const level = useRpg((s) => s.level);
+  const xp = useRpg((s) => s.xp);
+  const xpTo = useRpg((s) => s.xpTo);
   const totals = sumStats({ base, invested, equipped, level, skills });
   const [tip, setTip] = useState<{ id: string; x: number; y: number } | null>(null);
   const names = new Map(CLASS_TREES[classId].flatMap((tree) => tree.skills.map((sk) => [sk.id, sk] as const)));
   const shown = tip ? names.get(tip.id) : undefined;
   const preview = tip ? skillPreview(tip.id, skills[tip.id] ?? 0, totals) : null;
+  const pct = Math.max(0, Math.min(1, xp / Math.max(1, xpTo)));
+  const keyOf = (index: number) => String(index + 1);
+  const [xpOn, setXpOn] = useState(false);
+  const [, setCd] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setCd(Date.now()), 90);
+    return () => window.clearInterval(timer);
+  }, []);
   return (
-    <div data-ui className="hud-hotbar pointer-events-auto absolute z-20 flex gap-1" onPointerDown={(e) => e.stopPropagation()}>
+    <div data-ui className="hud-hotbar-wrap pointer-events-auto absolute z-20" onPointerDown={(e) => e.stopPropagation()}>
+      <div className="xp-split" onMouseEnter={() => setXpOn(true)} onMouseLeave={() => setXpOn(false)}>
+        {[0, 1, 2, 3].map((part) => {
+          const fill = Math.max(0, Math.min(1, pct * 4 - part));
+          return (
+            <span key={part}>
+              <i style={{ width: `${fill * 100}%` }} />
+            </span>
+          );
+        })}
+      </div>
+      {xpOn ? (
+        <div className="xp-tip">
+          <b>{Math.round(pct * 100)}% XP</b>
+          <span>
+            {xpTo}/{Math.floor(xp)}
+          </span>
+          <em>gerekli / anlık</em>
+        </div>
+      ) : null}
+      {shown && preview && tip ? (
+        <div className="skill-tip rounded-md border border-border bg-surface/95 p-2 text-left text-xs text-fg shadow-lg">
+          <p className="text-gold">{shown.name}</p>
+          <p className="mt-1 text-muted">{shown.desc}</p>
+          <p className="mt-1">{preview.buff ? "Hasar yok" : `Hasar ${preview.dmg}`}</p>
+          <p className="text-muted">Seviye {skillTier(skills[tip.id] ?? 0)} · {skillCdLeft(tip.id) > 0.05 ? `${skillCdLeft(tip.id).toFixed(1)} sn` : "Hazır"}</p>
+        </div>
+      ) : null}
+      <div className="hud-hotbar flex gap-1">
       {hotbar.map((id, index) => (
         <button
           key={index}
           type="button"
-          className="hud-slot relative grid place-items-center rounded-md border border-border bg-surface/95"
+          className="hud-slot relative grid place-items-center overflow-hidden rounded-md border border-border bg-surface/95"
           onClick={() => id && useRpg.getState().castSkill(id)}
           onMouseEnter={(e) => id && setTip({ id, x: e.clientX, y: e.clientY })}
           onMouseMove={(e) => id && setTip({ id, x: e.clientX, y: e.clientY })}
@@ -1452,18 +1675,92 @@ function Hotbar() {
             if (raw.startsWith("skill:")) useRpg.getState().setHotbar(index, raw.slice(6));
           }}
         >
-          <span className="absolute top-0.5 left-1 text-[9px] text-muted">{index + 1}</span>
+          <span className="absolute top-0.5 left-1 text-[9px] text-muted">{keyOf(index)}</span>
           {id ? <SkillMark id={id} /> : null}
+          {id && skillCdLeft(id) > 0.05 ? (
+            <span className="cd-veil" style={{ ["--cd" as string]: String(Math.max(0, Math.min(1, skillCdLeft(id) / Math.max(0.2, skillCdTotal(id))))) }}>
+              <i />
+            </span>
+          ) : null}
         </button>
       ))}
-      {shown && preview && tip ? (
-        <div className="pointer-events-none absolute bottom-14 left-1/2 z-30 w-56 -translate-x-1/2 rounded-md border border-border bg-surface/95 p-2 text-left text-xs text-fg shadow-lg">
-          <p className="text-gold">{shown.name}</p>
-          <p className="mt-1 text-muted">{shown.desc}</p>
-          <p className="mt-1">{preview.buff ? "Hasar yok" : `Hasar ${preview.dmg}`}</p>
-          <p className="text-muted">Seviye {skillTier(skills[tip.id] ?? 0)} · {skillCdLeft(tip.id) > 0.05 ? `${skillCdLeft(tip.id).toFixed(1)} sn` : "Hazır"}</p>
-        </div>
-      ) : null}
+      <button
+        type="button"
+        data-belt="hp"
+        draggable={!!pots.hp}
+        className={`hud-slot belt-pot relative grid place-items-center rounded-md text-[10px] ${pots.hp ? "is-full hp" : ""}`}
+        onClick={() => useRpg.getState().drinkPotion("hp")}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          const hole = useRpg.getState().bag.findIndex((slot, i) => i < openBagCount(useRpg.getState().bagStage) && slot == null);
+          if (hole >= 0) useRpg.getState().takeBeltPot("hp", hole);
+          else useRpg.setState({ toast: "Envanterinde yer yok" });
+        }}
+        onDragStart={(e) => {
+          setCarry({ kind: "pot", pot: "hp" });
+          e.dataTransfer.setData("text/plain", "pot:hp");
+          e.dataTransfer.effectAllowed = "move";
+        }}
+        onDragEnd={() => setCarry(null)}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const token = readCarry();
+          const raw = e.dataTransfer.getData("text/plain");
+          const index = token?.kind === "bag" ? token.index : raw.startsWith("bag:") ? Number(raw.slice(4)) : -1;
+          if (index >= 0) useRpg.getState().setBeltPot("hp", index);
+          setCarry(null);
+        }}
+      >
+        <span className="absolute top-0.5 left-1 text-[9px] text-muted">F1</span>
+        {pots.hp ? (
+          <>
+            <ItemMark item={pots.hp} />
+            {(pots.hp.count ?? 0) > 1 ? <span className="slot-count">x{pots.hp.count}</span> : null}
+          </>
+        ) : (
+          <span className="belt-empty">Can</span>
+        )}
+      </button>
+      <button
+        type="button"
+        data-belt="mp"
+        draggable={!!pots.mp}
+        className={`hud-slot belt-pot relative grid place-items-center rounded-md text-[10px] ${pots.mp ? "is-full mp" : ""}`}
+        onClick={() => useRpg.getState().drinkPotion("mp")}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          const hole = useRpg.getState().bag.findIndex((slot, i) => i < openBagCount(useRpg.getState().bagStage) && slot == null);
+          if (hole >= 0) useRpg.getState().takeBeltPot("mp", hole);
+          else useRpg.setState({ toast: "Envanterinde yer yok" });
+        }}
+        onDragStart={(e) => {
+          setCarry({ kind: "pot", pot: "mp" });
+          e.dataTransfer.setData("text/plain", "pot:mp");
+          e.dataTransfer.effectAllowed = "move";
+        }}
+        onDragEnd={() => setCarry(null)}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const token = readCarry();
+          const raw = e.dataTransfer.getData("text/plain");
+          const index = token?.kind === "bag" ? token.index : raw.startsWith("bag:") ? Number(raw.slice(4)) : -1;
+          if (index >= 0) useRpg.getState().setBeltPot("mp", index);
+          setCarry(null);
+        }}
+      >
+        <span className="absolute top-0.5 left-1 text-[9px] text-muted">F2</span>
+        {pots.mp ? (
+          <>
+            <ItemMark item={pots.mp} />
+            {(pots.mp.count ?? 0) > 1 ? <span className="slot-count">x{pots.mp.count}</span> : null}
+          </>
+        ) : (
+          <span className="belt-empty">Mana</span>
+        )}
+      </button>
+      </div>
     </div>
   );
 }
@@ -1474,15 +1771,15 @@ function QuickButtons() {
   return (
     <>
       {unspent > 0 ? (
-        <button type="button" data-ui className="hud-plus left-4" onClick={() => useRpg.getState().showChar("stats")}>
+        <button type="button" data-ui className="hud-plus left-4" title="Statü Geliştir" onClick={() => useRpg.getState().showChar("stats")}>
           <b>+</b>
-          <span>Statü Geliştir</span>
+          <span>Statü</span>
         </button>
       ) : null}
       {points > 0 ? (
-        <button type="button" data-ui className="hud-plus right-4" onClick={() => useRpg.getState().showChar("skills")}>
+        <button type="button" data-ui className="hud-plus right-4" title="Beceri Geliştir" onClick={() => useRpg.getState().showChar("skills")}>
           <b>+</b>
-          <span>Beceri Geliştir</span>
+          <span>Beceri</span>
         </button>
       ) : null}
     </>
@@ -1512,11 +1809,11 @@ function QuestTracker({ open }: { open: boolean }) {
   }, []);
   if (!open) return null;
   return (
-    <div className="hud-quests pointer-events-auto absolute z-10 rounded-md border border-border bg-surface/80 px-3 py-2">
+    <div className="hud-quests pointer-events-auto rounded-md border border-border bg-surface/80 px-3 py-2">
       <p className="text-[10px] tracking-widest text-gold">Görevler</p>
       {way ? <p className="mt-1 text-[11px] text-gold">Yön: {way}</p> : null}
       {active.length === 0 ? <p className="mt-1 text-[11px] text-muted">Görev yok</p> : null}
-      {active.map((quest) => {
+      {active.slice(0, 4).map((quest) => {
         const preview = quest.rewardName
           ? ({
               uid: quest.id,
@@ -1536,7 +1833,8 @@ function QuestTracker({ open }: { open: boolean }) {
         return (
           <div key={quest.id} className="mt-1.5">
             <p className="text-xs text-fg">{quest.title}{quest.minLevel ? ` · Sv.${quest.minLevel}` : ""}</p>
-            <p className="text-[11px] text-muted">{quest.done ? "Ödül için görevliye dön" : `${Math.min(quest.have, quest.need)}/${quest.need}`}</p>
+            <p className="text-[11px] text-muted">{quest.detail}</p>
+            <p className="text-[11px] text-muted">{quest.done || quest.have >= quest.need ? `${giverLabel(questGiver(questBoardRow(quest)))} teslim alır` : `${Math.min(quest.have, quest.need)}/${quest.need}`}</p>
             <p className="text-[11px] text-gold">
               {quest.xpReward ?? 0} XP · {quest.goldReward ?? 0} altın
             </p>
@@ -1553,37 +1851,54 @@ function QuestTracker({ open }: { open: boolean }) {
           </div>
         );
       })}
+      {active.length > 4 ? <p className="mt-1 text-[11px] text-muted">+{active.length - 4} görev</p> : null}
       {tip ? <Tip item={tip.item} x={tip.x} y={tip.y} /> : null}
+    </div>
+  );
+}
+
+function MailNotes() {
+  const mail = useSyncExternalStore(subscribeChat, mailSnapshot, mailSnapshot);
+  if (!mail.length) return null;
+  return (
+    <div data-ui className="hud-mail pointer-events-auto flex flex-col items-end gap-1" onPointerDown={(e) => e.stopPropagation()}>
+      {mail.map((row) => (
+        <button key={row.id} type="button" className="rounded-md border border-gold/50 bg-surface/90 px-2 py-1 text-left" onClick={() => openMail(row.id)}>
+          <span className="block text-sm text-gold">✉</span>
+          <span className="block text-[11px] text-fg">{row.nick}</span>
+        </button>
+      ))}
     </div>
   );
 }
 
 function SettingsMenu({ mode, onMode, onClose, onFriends }: { mode: "root" | "opts"; onMode: (mode: "root" | "opts") => void; onClose: () => void; onFriends: () => void }) {
   const gfx = useSyncExternalStore(subscribeGfx, readGfx, readGfx);
+  const live = useSyncExternalStore(subscribeGfx, effectiveGfx, effectiveGfx);
+  const music = useSyncExternalStore(subscribeMusic, readMusic, readMusic);
   const panelOpen = useRpg((s) => s.charOpen || s.invOpen || Boolean(s.shop));
   useEffect(() => {
     loadGfx();
+    loadMusic();
   }, []);
   if (panelOpen) return null;
   const go = (run: () => void) => {
     onClose();
     run();
   };
+  const pickPreset = (name: Exclude<GfxPreset, "custom">) => writeGfx({ ...GFX_PRESETS[name], auto: false });
   return (
-    <div data-ui className="settings-menu hud-window pointer-events-auto absolute top-1/2 left-1/2 z-50 w-[min(18rem,86vw)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-surface/95 p-3" onPointerDown={(e) => e.stopPropagation()}>
+    <div data-ui className={`settings-menu hud-window pointer-events-auto absolute top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-surface/95 p-3 ${mode === "opts" ? "is-gfx w-[min(22rem,92vw)]" : "w-[min(18rem,86vw)]"}`} onPointerDown={(e) => e.stopPropagation()}>
       {mode === "root" ? (
         <div className="flex flex-col gap-1.5">
           <p className="mb-1 text-xs tracking-widest text-gold">Ayarlar</p>
-          <button type="button" className="rounded-md border border-border px-3 py-2 text-left text-sm" onClick={() => go(onFriends)}>
-            Dostlar
-          </button>
           <button type="button" className="rounded-md border border-border px-3 py-2 text-left text-sm" onClick={() => onMode("opts")}>
             Oyun Seçenekleri
           </button>
-          <button type="button" className="rounded-md border border-border px-3 py-2 text-left text-sm" onClick={() => go(() => leaveToCharacters())}>
+          <button type="button" className="rounded-md border border-border px-3 py-2 text-left text-sm" onClick={() => go(() => beginExit("char"))}>
             Karakter Değişikliği
           </button>
-          <button type="button" className="rounded-md border border-border px-3 py-2 text-left text-sm" onClick={() => go(() => void signOut("/"))}>
+          <button type="button" className="rounded-md border border-border px-3 py-2 text-left text-sm" onClick={() => go(() => beginExit("out"))}>
             Çıkış
           </button>
           <button
@@ -1603,34 +1918,86 @@ function SettingsMenu({ mode, onMode, onClose, onFriends }: { mode: "root" | "op
           </button>
         </div>
       ) : (
-        <div className="flex flex-col gap-2 text-sm">
-          <p className="text-xs tracking-widest text-gold">Oyun Seçenekleri</p>
+        <div className="flex flex-col gap-2 overflow-hidden text-sm">
+          <p className="text-xs tracking-widest text-gold">Grafik seçenekleri</p>
+          <div className="grid grid-cols-4 gap-1">
+            {(
+              [
+                ["low", "Düşük"],
+                ["med", "Orta"],
+                ["high", "Yüksek"],
+                ["ultra", "Ultra"],
+              ] as const
+            ).map(([id, label]) => (
+              <button key={id} type="button" className={`rounded-md border px-1 py-1.5 text-xs ${live.preset === id && !live.auto ? "border-gold text-gold" : "border-border"}`} onClick={() => pickPreset(id)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <label className="flex items-center justify-between gap-2">
+            Otomatik
+            <input type="checkbox" checked={gfx.auto} onChange={(e) => writeGfx({ auto: e.target.checked, preset: e.target.checked ? "med" : "custom" })} />
+          </label>
+          <label className="flex items-center justify-between gap-2">
+            Çözünürlük
+            <select className="rounded-md border border-border bg-bg px-2 py-1" value={String(live.scale)} onChange={(e) => writeGfx({ scale: Number(e.target.value), quality: Number(e.target.value), auto: false, preset: "custom" })}>
+              <option value={0.65}>%65</option>
+              <option value={0.85}>%85</option>
+              <option value={1}>%100</option>
+              <option value={1.2}>%120</option>
+            </select>
+          </label>
+          <label className="flex items-center justify-between gap-2">
+            Görüş
+            <select className="rounded-md border border-border bg-bg px-2 py-1" value={String(live.distance)} onChange={(e) => writeGfx({ distance: Number(e.target.value), auto: false, preset: "custom" })}>
+              <option value={52}>Yakın</option>
+              <option value={72}>Orta</option>
+              <option value={150}>Uzak</option>
+              <option value={240}>Tam</option>
+            </select>
+          </label>
+          <label className="flex items-center justify-between gap-2">
+            Çimen
+            <select className="rounded-md border border-border bg-bg px-2 py-1" value={String(live.grass)} onChange={(e) => writeGfx({ grass: Number(e.target.value) as 0 | 1 | 2, auto: false, preset: "custom" })}>
+              <option value={0}>Kapalı</option>
+              <option value={1}>Az</option>
+              <option value={2}>Tam</option>
+            </select>
+          </label>
+          <label className="flex items-center justify-between gap-2">
+            Yaratıklar
+            <select className="rounded-md border border-border bg-bg px-2 py-1" value={String(live.mobs)} onChange={(e) => writeGfx({ mobs: Number(e.target.value) as 0 | 1 | 2, auto: false, preset: "custom" })}>
+              <option value={0}>Yakın</option>
+              <option value={1}>Dengeli</option>
+              <option value={2}>Tam</option>
+            </select>
+          </label>
+          <label className="flex items-center justify-between gap-2">
+            Efektler
+            <input type="checkbox" checked={live.effects} onChange={(e) => writeGfx({ effects: e.target.checked, auto: false, preset: "custom" })} />
+          </label>
           <label className="flex items-center justify-between gap-2">
             FPS
-            <select className="rounded-md border border-border bg-bg px-2 py-1" value={gfx.fps} onChange={(e) => writeGfx({ fps: Number(e.target.value) })}>
+            <select className="rounded-md border border-border bg-bg px-2 py-1" value={String(live.fps)} onChange={(e) => writeGfx({ fps: Number(e.target.value), auto: false, preset: "custom" })}>
               <option value={30}>30</option>
               <option value={60}>60</option>
               <option value={120}>120</option>
             </select>
           </label>
           <label className="flex items-center justify-between gap-2">
-            Görüntü
-            <select className="rounded-md border border-border bg-bg px-2 py-1" value={gfx.quality} onChange={(e) => writeGfx({ quality: Number(e.target.value), auto: false })}>
-              <option value={0.7}>Düşük</option>
-              <option value={1}>Orta</option>
-              <option value={1.25}>Yüksek</option>
-            </select>
-          </label>
-          <label className="flex items-center justify-between gap-2">
-            Otomatik grafik
-            <input type="checkbox" checked={gfx.auto} onChange={(e) => writeGfx({ auto: e.target.checked })} />
-          </label>
-          <label className="flex items-center justify-between gap-2">
-            Ses
+            Ortam
             <input type="range" min={0} max={1} step={0.05} value={gfx.volume} onChange={(e) => writeGfx({ volume: Number(e.target.value) })} />
           </label>
-          <button type="button" className="rounded-md border border-border px-3 py-1.5 text-left" onClick={onClose}>
-            Kapat
+          <label className="flex items-center justify-between gap-2">
+            Müzik
+            <span className="flex items-center gap-2">
+              <input type="range" min={0} max={1} step={0.05} value={music} onChange={(e) => writeMusic(Number(e.target.value))} />
+              <span className="w-8 text-right text-xs tabular-nums text-gold">{Math.round(music * 100)}</span>
+            </span>
+          </label>
+          <p className="text-[11px] leading-snug text-muted">Düşük en akıcıdır. Uzak yaratıklar görüş mesafesinin dışında durur, yaklaşınca uyanır.</p>
+          <button type="button" className="rounded-md border border-border px-3 py-1.5 text-left" onClick={() => onMode("root")}>
+            Geri
           </button>
         </div>
       )}
@@ -1661,35 +2028,186 @@ function PartyWindow() {
   );
 }
 
+const BOARD_TABS = [
+  ["level", "Level Sıralaması"],
+  ["kills", "Mob Kesme Sıralaması"],
+  ["bossKills", "Boss Kesme Sıralaması"],
+  ["duelWins", "Düello Sıralaması"],
+  ["goldEarned", "Kazanılan Altın"],
+  ["mines", "Madencilik Sıralaması"],
+  ["fish", "Balıkçılık Sıralaması"],
+  ["damage", "Verilen Hasar Sıralaması"],
+] as const;
+
+function BoardWindow({ onClose }: { onClose: () => void }) {
+  const nick = useRpg((s) => s.nick);
+  const [rows, setRows] = useState<BoardRow[] | null>(null);
+  const [tab, setTab] = useState<(typeof BOARD_TABS)[number][0]>("level");
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    let live = true;
+    void leaderboard()
+      .then((data) => {
+        if (live) setRows(data);
+      })
+      .catch(() => {
+        if (live) setRows([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const ranked = (rows ?? []).slice().sort((a, b) => b[tab] - a[tab] || b.level - a.level);
+  const q = query.trim().toLocaleLowerCase("tr");
+  const mine = ranked.findIndex((row) => row.name.toLocaleLowerCase("tr") === nick.trim().toLocaleLowerCase("tr"));
+  const listed = ranked
+    .map((row, index) => ({ row, place: index + 1 }))
+    .filter(({ row }) => !q || row.name.toLocaleLowerCase("tr").includes(q));
+  const shown = q ? listed.slice(0, 40) : listed.slice(0, 12);
+  const score = (row: BoardRow) => (tab === "level" ? row.level : row[tab]);
+  return (
+    <div data-ui className="board-sheet pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
+      <div className="board-top">
+        <div>
+          <p className="text-[10px] tracking-[0.28em] text-gold/80">ABİS</p>
+          <p className="font-display text-xl text-gold">Sıralama</p>
+        </div>
+        <div className="board-actions">
+          <button type="button" className="win-x" aria-label="Kapat" onClick={onClose}>
+            ×
+          </button>
+          <p className="board-me">
+            Sıralama <b>{mine >= 0 ? mine + 1 : "—"}</b>
+          </p>
+        </div>
+      </div>
+      <input
+        className="board-search"
+        placeholder="İsim ara"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      <div className="board-tabs">
+        {BOARD_TABS.map(([id, label]) => (
+          <button key={id} type="button" className={tab === id ? "is-on" : ""} onClick={() => setTab(id)}>
+            {label.replace(" Sıralaması", "")}
+          </button>
+        ))}
+      </div>
+      {rows == null ? <p className="text-xs text-muted">Yükleniyor</p> : null}
+      {rows && shown.length === 0 ? <p className="text-xs text-muted">{q ? "Bu isim yok" : "Henüz kayıt yok"}</p> : null}
+      <div className="board-list">
+        {shown.map(({ row, place }) => {
+          const title = rankOf(row.fame ?? 0);
+          return (
+            <div key={`${row.name}-${place}`} className={`board-row rank-${place}${place === mine + 1 ? " is-me" : ""}`}>
+              <b>{place}</b>
+              <span className="min-w-0">
+                <span className="block truncate">{row.name}</span>
+                <span className="board-meta">
+                  Sv.{row.level}
+                  {title ? (
+                    <em className={title.glow ? "rank-name is-glow" : "rank-name"} style={{ color: title.color }}>
+                      {title.name}
+                    </em>
+                  ) : (
+                    <em className="text-muted">Ünvansız</em>
+                  )}
+                </span>
+              </span>
+              <strong>{score(row)}</strong>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FriendsWindow({ onClose }: { onClose: () => void }) {
   const snap = useSyncExternalStore(subscribeTarget, targetSnapshot, targetSnapshot);
   return (
-    <div data-ui className="hud-friends pointer-events-auto absolute right-4 bottom-40 z-20 w-[min(18rem,86vw)] rounded-lg border border-border bg-surface/95 p-2 md:bottom-24">
-      <div className="mb-1 flex items-center justify-between">
-        <p className="text-xs tracking-wide text-gold">Arkadaşlar</p>
-        <button type="button" className="text-xs text-muted" onClick={onClose}>
-          Kapat
+    <div data-ui className="friend-sheet hud-window pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
+      <div className="friend-head">
+        <div>
+          <p className="text-[10px] tracking-[0.28em] text-gold/80">ABİS</p>
+          <p className="font-display text-xl text-gold">Dostlar</p>
+        </div>
+        <button type="button" className="win-x" aria-label="Kapat" onClick={onClose}>
+          ×
         </button>
       </div>
-      {snap.friends.length === 0 ? <p className="text-xs text-muted">Henüz dost yok</p> : null}
-      {snap.friends.map((mate) => (
-        <div key={mate.id} className="mt-1 flex items-center justify-between gap-1">
-          <p className="min-w-0 truncate text-xs text-fg">
-            {mate.nick} <span className="text-muted">Sv.{mate.level}</span>
-          </p>
-          <span className="flex shrink-0 gap-1">
-            <button type="button" className="rounded border border-border px-1 text-[10px]" onClick={() => setWhisper({ id: mate.id, nick: mate.nick })}>
-              Fısıltı
-            </button>
-            <button type="button" className="rounded border border-border px-1 text-[10px]" onClick={() => removeFriend(mate.id)}>
-              Sil
-            </button>
-            <button type="button" className="rounded border border-border px-1 text-[10px] text-hp" onClick={() => blockMate(mate)}>
-              Engelle
-            </button>
-          </span>
+      <p className="friend-lead">Bir oyuncuya sağ tıkla dostluk teklif et. Fısıltı, engel ve silme buradan yürür.</p>
+      {snap.friends.length === 0 ? <p className="friend-empty">Henüz dost yok. Meydanda birine sağ tıkla.</p> : null}
+      <div className="friend-list">
+        {snap.friends.map((mate) => (
+          <div key={mate.id} className="friend-card">
+            <div className="min-w-0">
+              <p className="friend-name">{mate.nick}</p>
+              <p className="friend-meta">Sv.{mate.level} · Dost</p>
+            </div>
+            <div className="friend-actions">
+              <button type="button" onClick={() => setWhisper({ id: mate.id, nick: mate.nick })}>
+                Fısıltı
+              </button>
+              <button type="button" onClick={() => removeFriend(mate.id)}>
+                Sil
+              </button>
+              <button type="button" className="is-bad" onClick={() => blockMate(mate)}>
+                Engelle
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DungeonBanner() {
+  const run = useSyncExternalStore(subscribeDungeon, dungeonNow, dungeonNow);
+  if (!run) return null;
+  return (
+    <div className="dungeon-banner" data-ui>
+      <b>{run.name}</b>
+      <span>Dalga {run.wave} / 5</span>
+    </div>
+  );
+}
+
+const GUIDE = [
+  ["İlk adım", "Köy Muhafızı ile konuş, görevi al. Sarı ok her zaman sıradaki yeri gösterir. Görev penceresinde ne yapacağın uzun yazılır."],
+  ["Savaş", "Space ile vur. Yaratığa tıkla, hedef seç. Seviyen yüksekse zayıf yaratık az deneyim verir. Ölünce olduğun yerde ya da köyde doğrulursun."],
+  ["Envanter", "Sağ tık veya sol çift tık kuşanır ve çıkarır. Kilitli sekmeye eşya sürüklenmez. Envanter Genişletme eşyasına sağ tık veya çift tık bas, slotlar açılır."],
+  ["İksir", "Kırmızı ve mavi iksiri alttaki can ve mana yuvalarına sürükle. F1 can, F2 mana içer."],
+  ["Pazar", "Satıcıdan Pazar al. Tezgaha eşya sürükle, fiyat yaz. Başkasının tezgahına tıkla, sağ tıkla satın al. Çanta doluysa alış olmaz."],
+  ["Artı basma", "Demirciye yalnız ekipmanı sürükle. Güç taşı ve yükseltme taşı çantadan kendisi gelir. +6 ve +10 ayrı görevdir. +10 için seviye 70 gerekir."],
+  ["Efsun", "Mistik Efsun eşyanın üstüne sürüklenir, en fazla 5 özellik. Mistik Değiştirici aynı eşyanın efsununu yeniler."],
+  ["Yetenek", "5. seviyeden önce alınmaz. Sınıfının ustasına uğramadan puan harcanmaz. Usta sarı okla durur. İlk puan bir ağacı kilitler."],
+  ["Boss", "Bosslar haritada gezmez. Mavi halkadan geçince havadaki yuvarlak zemine çıkarsın. 5 dalga: 3, 3, 3, 4 yaratık, sonra yalnız boss. Bitince kapının önüne dönersin. Kapı tekrar girilir."],
+  ["Ünvan", "Mob kestikçe derece birikir. İsminin yanında, seviyenin sağında yazar. 1000 Acemi, 3000 Deneyimli, 8000 Usta, 12000 Ajan, 15000 Abis Kahramanı."],
+];
+
+function GuideBook({ onClose }: { onClose: () => void }) {
+  return (
+    <div data-ui className="guide-sheet hud-window pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
+      <div className="friend-head">
+        <div>
+          <p className="text-[10px] tracking-[0.28em] text-gold/80">ABİS</p>
+          <p className="font-display text-xl text-gold">Nasıl oynanır</p>
         </div>
-      ))}
+        <button type="button" className="win-x" aria-label="Kapat" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      <div className="guide-list">
+        {GUIDE.map(([title, body]) => (
+          <article key={title}>
+            <h3>{title}</h3>
+            <p>{body}</p>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1699,6 +2217,9 @@ function WorldMap({ zone, big, onToggle }: { zone: string; big: boolean; onToggl
   const [blink, setBlink] = useState(0);
   const [coords, setCoords] = useState(false);
   const [mark, setMark] = useState<string | null>(null);
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  const drag = useRef<{ dx: number; dy: number; moved: boolean } | null>(null);
+  const skipClick = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [view, setView] = useState({ w: 1280, h: 800 });
   useEffect(() => {
@@ -1817,8 +2338,47 @@ function WorldMap({ zone, big, onToggle }: { zone: string; big: boolean; onToggl
     }
   }, [size, sim.x, sim.z, blink, realm.id, half, bound, guide, spots]);
   return (
-    <div data-ui className={big ? "hud-map is-big pointer-events-auto absolute left-1/2 z-30 -translate-x-1/2" : "hud-map pointer-events-auto absolute z-20"}>
-      <button type="button" className="block" onClick={onToggle} aria-label="Harita">
+    <div
+      data-ui
+      className={big ? "hud-map is-big pointer-events-auto absolute z-30" : "hud-map pointer-events-auto absolute z-20"}
+      style={big && at ? { left: at.x, top: at.y, right: "auto", transform: "none" } : undefined}
+      onPointerDown={(e) => {
+        if (!big) return;
+        const box = e.currentTarget.getBoundingClientRect();
+        drag.current = { dx: e.clientX - box.left, dy: e.clientY - box.top, moved: false };
+        e.currentTarget.setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (!drag.current) return;
+        if (Math.hypot(e.movementX, e.movementY) > 2) drag.current.moved = true;
+        setAt({
+          x: Math.max(4, Math.min(window.innerWidth - 48, e.clientX - drag.current.dx)),
+          y: Math.max(4, Math.min(window.innerHeight - 48, e.clientY - drag.current.dy)),
+        });
+      }}
+      onPointerUp={(e) => {
+        skipClick.current = Boolean(drag.current?.moved);
+        drag.current = null;
+        if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+      }}
+      onPointerCancel={(e) => {
+        drag.current = null;
+        if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+      }}
+    >
+      <button
+        type="button"
+        className="block"
+        onClick={(e) => {
+          if (skipClick.current) {
+            skipClick.current = false;
+            e.preventDefault();
+            return;
+          }
+          onToggle();
+        }}
+        aria-label="Harita"
+      >
         <span className="relative block overflow-hidden rounded-lg border border-border" style={{ width: size, height: size }}>
           <canvas ref={canvasRef} className="block h-full w-full" />
           <span
@@ -1874,8 +2434,6 @@ function Prompt() {
   const vein = useRpg((s) => s.vein);
   const weaponId = useRpg((s) => s.equipped.weapon?.id);
   const chore = useRpg((s) => s.chore);
-  const steed = useRpg((s) => s.steed);
-  const riding = useRpg((s) => s.riding);
   const hint = useSyncExternalStore(subscribeField, lootHint, lootHint);
   const cls = "hud-prompt absolute bottom-[18%] left-1/2 -translate-x-1/2 rounded-lg border border-border bg-surface/90 px-3 py-2 text-sm text-fg";
   if (chore) return null;
@@ -1892,7 +2450,6 @@ function Prompt() {
     if (style !== "olta") return <p className={cls}>Oltayı kuşan</p>;
     return <p className={cls}>Balık tut</p>;
   }
-  if (steed) return <p className={cls}>{riding ? "H — attan in" : "H — ata bin"}</p>;
   return null;
 }
 
@@ -1926,9 +2483,10 @@ function ToolHud() {
   return (
     <div className="absolute bottom-[22%] left-1/2 w-64 -translate-x-1/2">
       <p className="mb-1 text-center text-sm text-gold">Kancaya bir balık takıldı</p>
-      <div className="relative h-3 overflow-hidden rounded-sm border border-border bg-bg">
+      <p className="mb-1 text-center text-[11px] text-muted">Çizgi sarı alana gelince Space</p>
+      <div className="fish-bar relative h-5 overflow-hidden rounded-md border border-gold/50 bg-black/70">
         <div className="absolute top-0 h-full bg-gold/80" style={{ left: `${zoneLeft}%`, width: `${zoneWidth}%` }} />
-        <div className="absolute top-0 h-full w-0.5 bg-fg" style={{ left: `${Math.max(0, Math.min(100, chore.needle * 100))}%` }} />
+        <div className="fish-needle absolute top-0 h-full" style={{ left: `${Math.max(0, Math.min(100, chore.needle * 100))}%` }} />
       </div>
     </div>
   );
@@ -1971,13 +2529,119 @@ function Hurt() {
   return <div className="absolute inset-0 bg-hp/25" style={{ opacity: hurt }} />;
 }
 
+function ChestWindow() {
+  const rev = useSyncExternalStore(subscribeField, fieldRev, fieldRev);
+  void rev;
+  const chest = chestView();
+  const [tip, setTip] = useState<{ item: Item; x: number; y: number } | null>(null);
+  if (!chest) return null;
+  return (
+    <section data-ui className="chest-sheet hud-window pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="font-display text-lg text-gold">Sandık</p>
+        <button type="button" className="text-xs text-muted" onClick={() => closeChest()}>
+          Kapat
+        </button>
+      </div>
+      <div className="bag-grid">
+        {chest.items.map((item, index) => (
+          <button
+            key={`${item.uid}-${index}`}
+            type="button"
+            className="octo-slot"
+            onClick={() => takeChestItem(index)}
+            onMouseEnter={(e) => setTip({ item, x: e.clientX, y: e.clientY })}
+            onMouseMove={(e) => setTip({ item, x: e.clientX, y: e.clientY })}
+            onMouseLeave={() => setTip(null)}
+          >
+            <ItemMark item={item} />
+            {(item.count ?? 0) > 1 ? <span className="slot-count">x{item.count}</span> : null}
+          </button>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] text-muted">Tıkla, envantere al.</p>
+      {tip ? <Tip item={tip.item} x={tip.x} y={tip.y} /> : null}
+    </section>
+  );
+}
+
+function StallBrowse() {
+  const rev = useSyncExternalStore(subscribeField, fieldRev, fieldRev);
+  void rev;
+  const id = stallViewId();
+  const boards = useSyncExternalStore(subscribeField, marketBoards, marketBoards);
+  const mine = useRpg((s) => s.stall) ?? [];
+  const [tip, setTip] = useState<{ item: Item; x: number; y: number } | null>(null);
+  if (!id) return null;
+  const own = id === "mine";
+  const board = own ? null : boards.find((row) => row.id === id);
+  const rows = own ? mine.map((row) => ({ uid: row.uid, price: row.price, item: row.item })) : (board?.items ?? []);
+  const nick = own ? "Senin pazarın" : board?.nick || "Oyuncu";
+  const buy = (row: { uid: string; price: number; item: Item }) => {
+    if (own || !board) return;
+    openAsk(`${displayName(row.item)}\n${row.price} altın. Satın almak istiyor musun?`, () => {
+      askStallBuy(board.id, row.uid, row.price, row.item);
+      closeStallView();
+    });
+  };
+  return (
+    <section data-ui className="stall-view hud-window pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div>
+          <p className="font-display text-lg text-gold">Pazar</p>
+          <p className="text-[11px] text-muted">{nick}</p>
+        </div>
+        <button type="button" className="text-xs text-muted" onClick={() => closeStallView()}>
+          Kapat
+        </button>
+      </div>
+      {!own && !board ? <p className="text-xs text-muted">Bu pazar kapandı.</p> : null}
+      <div className="stall-grid">
+        {rows.map((row) => (
+          <button
+            key={row.uid}
+            type="button"
+            className="octo-slot"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              buy(row);
+            }}
+            onMouseEnter={(e) => setTip({ item: row.item, x: e.clientX, y: e.clientY })}
+            onMouseMove={(e) => setTip({ item: row.item, x: e.clientX, y: e.clientY })}
+            onMouseLeave={() => setTip(null)}
+          >
+            <ItemMark item={row.item} />
+            <span className="slot-price">{row.price}</span>
+          </button>
+        ))}
+        {rows.length === 0 ? <p className="col-span-4 text-xs text-muted">Tezgahta eşya yok.</p> : null}
+      </div>
+      {own ? (
+        <button
+          type="button"
+          className="mt-2 w-full rounded-md border border-gold px-2 py-1.5 text-xs text-gold"
+          onClick={() => {
+            closeStallView();
+            useRpg.setState({ shop: "stall", invOpen: true, charOpen: false });
+          }}
+        >
+          Düzenle
+        </button>
+      ) : (
+        <p className="mt-2 text-[11px] text-muted">Sağ tık veya slota tıkla. Evet dersen alır, hayır dersen vazgeçer.</p>
+      )}
+      {tip ? <Tip item={tip.item} x={tip.x} y={tip.y} /> : null}
+    </section>
+  );
+}
+
 function Panels() {
   const invOpen = useRpg((s) => s.invOpen);
   const charOpen = useRpg((s) => s.charOpen);
   const shop = useRpg((s) => s.shop);
   if (!invOpen && !charOpen && !shop) return null;
   return (
-    <div className="pointer-events-none absolute inset-0" data-ui>
+    <div className={shop ? "window-pair" : "pointer-events-none absolute inset-0"} data-ui>
       {invOpen ? <Inventory /> : null}
       {shop === "smith" ? (
         <div className="shop-layer pointer-events-none absolute inset-0 grid place-items-center p-3">
@@ -2024,12 +2688,13 @@ function Panels() {
   );
 }
 
-function Shell({ title, children, className, vendor = false }: { title: string; children: ReactNode; className?: string; vendor?: boolean }) {
+function Shell({ title, children, className, vendor = false, stall = false }: { title: string; children: ReactNode; className?: string; vendor?: boolean; stall?: boolean }) {
   return (
     <section
       data-ui
       {...(vendor ? { "data-vendor": "" } : {})}
-      className={`pointer-events-auto max-h-[78dvh] overflow-x-hidden overflow-y-auto break-words rounded-xl border border-border/80 bg-surface/95 p-3 text-fg hud-window ${className ?? "w-[min(26rem,92vw)]"}`}
+      {...(stall ? { "data-stall": "" } : {})}
+      className={`pointer-events-auto break-words rounded-xl border border-border/80 bg-surface/95 p-3 text-fg hud-window ${className ?? "w-[min(22rem,92vw)]"}`}
       onPointerDown={(e) => e.stopPropagation()}
       onDragOver={vendor ? (e) => {
         e.preventDefault();
@@ -2070,7 +2735,17 @@ function Tip({ item, x, y }: { item: Item; x: number; y: number }) {
     <div className="pointer-events-none fixed z-[80] w-[18vw] min-w-[9rem] max-w-[16rem] rounded-md border border-gold bg-bg/95 p-2 text-xs text-fg shadow-lg" style={{ left, top }}>
       <p className="text-sm text-gold">{displayName(item)}</p>
       <p className="text-muted">
-        {SLOT_LABEL[item.slot] ?? "Eşya"} · Sv.{item.level}
+        {item.id === "kazma"
+          ? "Kazma · Sv.8"
+          : item.kind === "mat" || String(item.id).startsWith("tas-")
+            ? item.name
+            : item.kind === "potion"
+              ? "İksir"
+              : item.kind === "fish"
+                ? "Balık"
+                : item.kind === "bag"
+                  ? "Eşya"
+                  : `${SLOT_LABEL[item.slot] ?? "Eşya"}${item.kind === "gear" || !item.kind ? ` · Sv.${item.level}` : ""}`}
         {item.plus > 0 ? ` · +${item.plus}` : ""}
       </p>
       {rows.length ? <p>{rows.join(" · ")}</p> : null}
@@ -2093,20 +2768,25 @@ function Tip({ item, x, y }: { item: Item; x: number; y: number }) {
 
 function ItemMark({ item }: { item: Item | null }) {
   if (!item) return null;
-  const pala = item.id.includes("pala");
-  const bow = item.id.includes("bow");
-  const staff = item.id.includes("staff");
-  const dagger = item.id.includes("dagger");
+  const style = item.kind === "mat" || item.kind === "potion" || item.kind === "fish" || item.kind === "bag" ? item.kind : weaponStyleOf(item.id);
   return (
     <svg viewBox="0 0 24 24" className="mb-0.5 h-6 w-6 text-gold" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-      {pala ? (
+      {style === "mat" || style === "bag" ? (
+        <path d="M12 3l2.2 4.6L19 8.4l-3.5 3.3.9 5L12 14.8 7.6 16.7l.9-5L5 8.4l4.8-.8z" />
+      ) : style === "potion" ? (
+        <path d="M10 3h4v3l3 4v9H7v-9l3-4z" />
+      ) : style === "fish" ? (
+        <path d="M4 12c4-4 8-4 12-1l4 1-4 1c-4 3-8 3-12-1zM8 12h.5" />
+      ) : style === "pala" ? (
         <path d="M12 2v16M9 18h6M12 18v4" />
-      ) : bow ? (
+      ) : style === "bow" ? (
         <path d="M8 4c7 4 7 12 0 16M8 4c3 5 3 11 0 16" />
-      ) : staff ? (
+      ) : style === "staff" ? (
         <path d="M12 3v18M12 6l3 2M12 6l-3 2" />
-      ) : dagger ? (
+      ) : style === "dagger" ? (
         <path d="M12 3l2 8h-4l2-8zM10 13h4v6h-4z" />
+      ) : style === "kazma" ? (
+        <path d="M4 8h12l4 2-4 2H8L4 8zM12 10v10" />
       ) : item.slot === "weapon" ? (
         <path d="M12 3v12M9 15h6M12 15v6" />
       ) : item.slot === "armor" ? (
@@ -2195,6 +2875,8 @@ function Inventory({ docked = false }: { docked?: boolean }) {
   const bag = useRpg((s) => s.bag);
   const equipped = useRpg((s) => s.equipped);
   const gold = useRpg((s) => s.gold);
+  const mountItem = useRpg((s) => s.mountItem);
+  const riding = useRpg((s) => s.riding);
   const bagStage = useRpg((s) => s.bagStage);
   const open = openBagCount(bagStage);
   const [page, setPage] = useState(0);
@@ -2234,19 +2916,22 @@ function Inventory({ docked = false }: { docked?: boolean }) {
     invPin.stick(next.x, next.y, w, h, placed.boxW, 0);
     setPos(next);
   };
-  const start = page * PAGE_SIZE;
   const release = (index: number, event: DragEvent<HTMLButtonElement>) => {
     const panel = (event.currentTarget as HTMLElement).closest("[data-inv]");
     const rect = panel?.getBoundingClientRect();
     const under = document.elementFromPoint(event.clientX, event.clientY);
     const ontoSmith = Boolean(under?.closest("[data-smith]"));
+    const ontoStall = Boolean(under?.closest("[data-stall]"));
+    const ontoTab = Boolean(under?.closest("[data-bag-tab]"));
+    const ontoBelt = Boolean(under?.closest("[data-belt]"));
     const ontoVendor = Boolean(under?.closest("[data-vendor]"));
     const outside = !!rect && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom);
     if (ontoVendor) {
       keepCarry = true;
       sellDragged(dragText(event.dataTransfer));
     }
-    if (outside && !keepCarry && !ontoSmith && !ontoVendor) {
+    if (ontoTab || ontoBelt) keepCarry = true;
+    if (outside && !keepCarry && !ontoSmith && !ontoVendor && !ontoStall && !ontoTab && !ontoBelt) {
       openAsk("Eşyayı yere atmak istiyor musunuz?", () => dropBag(index));
     }
     keepCarry = false;
@@ -2257,12 +2942,12 @@ function Inventory({ docked = false }: { docked?: boolean }) {
     <section
       data-ui
       data-inv
-      className={`inv-sheet hud-window pointer-events-auto overflow-x-hidden overflow-y-auto break-words p-3 text-fg ${docked ? "relative" : "absolute"}`}
+      className={`inv-sheet hud-window pointer-events-auto break-words p-3 text-fg ${docked ? "relative" : "absolute"}`}
       style={docked ? undefined : { left: pos.x, top: pos.y }}
       onPointerDown={(e) => e.stopPropagation()}
     >
       <div
-        className="mb-3 flex cursor-grab items-center justify-between active:cursor-grabbing"
+        className="inv-head"
         onPointerDown={(e) => {
           if ((e.target as HTMLElement).closest("button")) return;
           drag.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y };
@@ -2273,10 +2958,14 @@ function Inventory({ docked = false }: { docked?: boolean }) {
           drag.current = null;
         }}
       >
-        <h2 className="font-display text-lg text-gold">Envanter</h2>
-        <button type="button" className="rounded-md border border-border px-2 py-1 text-sm" onClick={() => useRpg.setState({ invOpen: false })}>
-          Kapat
-        </button>
+          <div>
+            <p className="inv-kicker">ABİS</p>
+            <h2 className="font-display text-lg text-gold">Envanter</h2>
+          </div>
+          <span className="inv-gold">{gold}</span>
+          <button type="button" className="win-x" aria-label="Kapat" onClick={() => useRpg.setState({ invOpen: false })}>
+            ×
+          </button>
       </div>
       <div className="flex flex-col gap-3">
         <div className="equip-board">
@@ -2293,6 +2982,7 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                 onMouseMove={(e) => show(it, e)}
                 onMouseLeave={() => setTip(null)}
                 onClick={() => it && useRpg.getState().unequip(slot)}
+                onDoubleClick={() => it && useRpg.getState().unequip(slot)}
                 onDragStart={(e) => {
                   setCarry({ kind: "slot", slot });
                   e.dataTransfer.setData("text/plain", `slot:${slot}`);
@@ -2320,67 +3010,104 @@ function Inventory({ docked = false }: { docked?: boolean }) {
               >
                 <ItemMark item={it} />
                 <span className="block text-muted">{SLOT_LABEL[slot]}</span>
-                <span className="block truncate">{it ? displayName(it) : "—"}</span>
               </button>
             );
           })}
+          <button
+            type="button"
+            draggable={!!mountItem && !riding}
+            style={{ gridArea: "3 / 4 / 4 / 5" }}
+            className="octo-slot is-mount"
+            onMouseEnter={(e) => show(mountItem, e)}
+            onMouseMove={(e) => show(mountItem, e)}
+            onMouseLeave={() => setTip(null)}
+            onClick={() => mountItem && useRpg.getState().toggleRide()}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              if (!mountItem || riding) return;
+              const hole = useRpg.getState().bag.findIndex((slot, i) => i < open && slot == null);
+              if (hole >= 0) useRpg.getState().stowMount(hole);
+              else useRpg.setState({ toast: "Çanta dolu" });
+            }}
+            onDragStart={(e) => {
+              setCarry({ kind: "bag", index: -1 });
+              e.dataTransfer.setData("text/plain", "mount:1");
+              e.dataTransfer.effectAllowed = "move";
+            }}
+            onDragEnd={() => setCarry(null)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const token = readCarry();
+              const raw = e.dataTransfer.getData("text/plain");
+              const index = token?.kind === "bag" ? token.index : raw.startsWith("bag:") ? Number(raw.slice(4)) : -1;
+              if (index >= 0) useRpg.getState().equipFromBag(index);
+              setCarry(null);
+            }}
+          >
+            {mountItem ? <ItemMark item={mountItem} /> : null}
+            <span className="block text-muted">At</span>
+          </button>
         </div>
         <div>
-          <div className="mb-1.5 flex gap-1">
-            {[0, 1, 2].map((n) => (
+          <div className="mb-1.5 flex flex-wrap gap-1">
+            {["I", "II", "III", "IV"].map((label, n) => (
               <button
                 key={n}
                 type="button"
+                data-bag-tab={n}
                 className={n === page ? "bag-tab is-on" : "bag-tab"}
                 onClick={() => setPage(n)}
-                onDragOver={(e) => e.preventDefault()}
+                onDragEnter={(e) => {
+                  e.preventDefault();
+                  if (n * PAGE_SIZE >= open) return;
+                  if (n !== page) setPage(n);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (n * PAGE_SIZE >= open) return;
+                  if (n !== page) setPage(n);
+                }}
                 onDrop={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  const token = readCarry();
-                  const raw = e.dataTransfer.getData("text/plain");
-                  if (token?.kind === "bag" || raw.startsWith("bag:")) {
-                    const from = token?.kind === "bag" ? token.index : Number(raw.slice(4));
-                    useRpg.getState().moveToPage(from, n);
-                  } else if (token?.kind === "slot" || raw.startsWith("slot:")) {
-                    const slot = token?.kind === "slot" ? token.slot : (raw.slice(5) as EquipSlot);
-                    const start = n * PAGE_SIZE;
-                    const bagNow = useRpg.getState().bag;
-                    let dest = -1;
-                    for (let i = 0; i < PAGE_SIZE; i++) {
-                      if (bagNow[start + i] == null) {
-                        dest = start + i;
-                        break;
-                      }
-                    }
-                    if (dest >= 0) useRpg.getState().placeEquip(slot, dest);
-                    else useRpg.setState({ toast: "Bu pencere dolu" });
+                  if (n * PAGE_SIZE >= open) {
+                    keepCarry = true;
+                    useRpg.setState({ toast: "Slotlar kapalı. Envanter genişletme ile slotları açabilirsiniz." });
+                    return;
                   }
-                  setCarry(null);
+                  keepCarry = true;
                   setPage(n);
                 }}
               >
-                {["I", "II", "III"][n]}
+                {label}
               </button>
             ))}
           </div>
-          <div className="bag-grid">
+          <div className="bag-pages">
+            {[0, 1, 2, 3].map((n) => (
+              <div key={n} className={n === page ? "bag-grid" : "bag-grid is-parked"}>
             {Array.from({ length: PAGE_SIZE }, (_, i) => {
-              const index = start + i;
+              const index = n * PAGE_SIZE + i;
               const it = bag[index] ?? null;
               const locked = index >= open;
               return (
                 <button
                   key={index}
                   type="button"
+                  data-bag={index}
                   draggable={!!it && !locked}
                   className={locked ? "octo-slot is-lock" : "octo-slot"}
                   onMouseEnter={(e) => show(it, e)}
                   onMouseMove={(e) => show(it, e)}
                   onMouseLeave={() => setTip(null)}
                   onClick={() => {
-                    if (locked) useRpg.setState({ toast: "Envanter Genişletme ile açılır" });
+                    if (locked) useRpg.setState({ toast: "Slotlar kapalı. Envanter genişletme ile slotları açabilirsiniz." });
                     else if (it && (it.id === "kazma" || it.id === "olta")) useRpg.getState().equipFromBag(index);
+                  }}
+                  onDoubleClick={() => {
+                    if (locked) useRpg.setState({ toast: "Slotlar kapalı. Envanter genişletme ile slotları açabilirsiniz." });
+                    else if (it) useRpg.getState().equipFromBag(index);
                   }}
                   onContextMenu={(e) => {
                     e.preventDefault();
@@ -2413,9 +3140,18 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                       return;
                     }
                     if (locked) {
-                      const item = from >= 0 ? useRpg.getState().bag[from] : null;
-                      if (item?.id === "bag-expand") useRpg.getState().useBagItem(from);
-                      else useRpg.setState({ toast: "Kilitli yuvaya Envanter Genişletme sürükle" });
+                      useRpg.setState({ toast: "Slotlar kapalı. Envanter genişletme ile slotları açabilirsiniz." });
+                      setCarry(null);
+                      return;
+                    }
+                    if (raw.startsWith("pot:")) {
+                      const kind = raw.slice(4) === "mp" ? "mp" : "hp";
+                      useRpg.getState().takeBeltPot(kind, index);
+                      setCarry(null);
+                      return;
+                    }
+                    if (raw.startsWith("mount:")) {
+                      useRpg.getState().stowMount(index);
                       setCarry(null);
                       return;
                     }
@@ -2434,7 +3170,7 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                   ) : it ? (
                     <>
                       <ItemMark item={it} />
-                      <span className="truncate">{displayName(it)}{it.count && it.count > 1 ? ` x${it.count}` : ""}</span>
+                      {(it.count ?? 0) > 1 ? <span className="slot-count">x{it.count}</span> : null}
                     </>
                   ) : (
                     ""
@@ -2442,11 +3178,15 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                 </button>
               );
             })}
+              </div>
+            ))}
           </div>
         </div>
       </div>
-      <p className="mt-3 border-t border-border pt-2 text-right text-sm text-gold">{gold} Altın</p>
-      <p className="mt-1 text-[11px] text-muted">Sağ tık kuşanır. Dükkan penceresine bırakınca satılır. Boş yere bırakınca yere atma sorulur.</p>
+      <button type="button" className="mt-3 w-full rounded-md border border-gold px-2 py-1.5 text-xs text-gold" onClick={() => useRpg.getState().tidyBag()}>
+        Envanteri düzenle
+      </button>
+      <p className="mt-1 text-[11px] text-muted">Sol çift tık veya sağ tık kuşanır ve çıkarır.</p>
       {tip ? <Tip item={tip.item} x={tip.x} y={tip.y} /> : null}
     </section>
   );
@@ -2464,11 +3204,15 @@ function Character() {
   const equipped = useRpg((s) => s.equipped);
   const skills = useRpg((s) => s.skills);
   const skillPoints = useRpg((s) => s.skillPoints);
+  const mentored = useRpg((s) => s.mentored);
   const chosenTree = useRpg((s) => s.chosenTree);
   const charTab = useRpg((s) => s.charTab);
   const quests = useRpg((s) => s.quests);
+  const fame = useRpg((s) => s.fame);
   const classId = useRpg((s) => s.classId);
+  const [questPage, setQuestPage] = useState(0);
   const totals = sumStats({ base, invested, equipped, level, skills });
+  const rank = rankOf(fame);
   const [pos, setPos] = useState(() => charPin.place(typeof window === "undefined" ? 1280 : window.innerWidth, typeof window === "undefined" ? 800 : window.innerHeight));
   useEffect(() => {
     const fit = () => setPos(charPin.place(window.innerWidth, window.innerHeight));
@@ -2498,7 +3242,7 @@ function Character() {
   return (
     <section
       data-ui
-      className={`hud-window pointer-events-auto absolute overflow-x-hidden overflow-y-auto rounded-xl border border-border/80 bg-surface/95 p-3 text-fg ${charTab === "skills" && !chosenTree ? "skill-wide" : ""}`}
+      className={`char-sheet hud-window pointer-events-auto absolute break-words rounded-xl border border-border/80 bg-surface/95 p-3 text-fg ${charTab === "skills" && !chosenTree ? "skill-wide" : ""}`}
       style={{ left: pos.x, top: pos.y }}
       onPointerDown={(e) => e.stopPropagation()}
     >
@@ -2519,23 +3263,46 @@ function Character() {
           Kapat
         </button>
       </div>
+      {charTab === "stats" && rank ? (
+        <p className={rank.glow ? "rank-name is-glow -mt-2 mb-2 text-sm" : "rank-name -mt-2 mb-2 text-sm"} style={{ color: rank.color }}>
+          {rank.name}
+        </p>
+      ) : null}
       {charTab === "stats" ? (
         <p className="mb-3 text-xs text-muted">
-          {className(classId)} · Sv. {level} · {Math.floor(xp)}/{xpTo} · Puan {unspent}
+          {className(classId)} · Sv. {level}
+          {rank ? (
+            <span className={rank.glow ? "rank-name is-glow" : "rank-name"} style={{ color: rank.color }}>
+              {" "}
+              {rank.name}
+            </span>
+          ) : null}
+          {" "}· {Math.floor(xp)}/{xpTo} · Puan {unspent}
         </p>
       ) : charTab === "skills" ? (
-        <p className="mb-3 text-xs text-muted">{level < 5 ? "Yetenekler 5. seviyede açılır." : `Yetenek puanı ${skillPoints}`}</p>
+        <p className="mb-3 text-xs text-muted">{level < 5 ? "Yetenekler 5. seviyede açılır." : !mentored ? "Önce sınıfının ustasına uğra. Usta sarı okla durur." : `Yetenek puanı ${skillPoints}`}</p>
       ) : null}
       {charTab === "quests" ? (
         <div className="flex flex-col gap-2">
-          {quests.filter((quest) => !quest.claimed).length === 0 ? <p className="text-xs text-muted">Görevler ilerledikçe kendiliğinden açılır.</p> : null}
-          {quests.filter((quest) => !quest.claimed).map((quest) => (
-            <div key={quest.id} className="rounded-md border border-border bg-bg/70 px-2 py-1.5 text-xs">
-              <p className="text-gold">{quest.title}{quest.minLevel ? ` · Sv.${quest.minLevel}` : ""}</p>
-              <p className="text-muted">{quest.detail}</p>
-              <p>{quest.done ? "Muhafıza dön, ödülü al" : `${Math.min(quest.have, quest.need)}/${quest.need}`}</p>
-            </div>
-          ))}
+          {(() => {
+            const openQuests = quests.filter((quest) => !quest.claimed);
+            const qPages = Math.max(1, Math.ceil(openQuests.length / 4));
+            const qSafe = Math.min(questPage, qPages - 1);
+            const view = openQuests.slice(qSafe * 4, qSafe * 4 + 4);
+            return (
+              <>
+                {openQuests.length === 0 ? <p className="text-xs text-muted">Sıradaki görev, veren NPC'den alınır.</p> : null}
+                {view.map((quest) => (
+                  <div key={quest.id} className="rounded-md border border-border bg-bg/70 px-2 py-1.5 text-xs">
+                    <p className="text-gold">{quest.title}{quest.minLevel ? ` · Sv.${quest.minLevel}` : ""}</p>
+                    <p className="text-muted">{quest.detail}</p>
+                    <p>{quest.done || quest.have >= quest.need ? `${giverLabel(questGiver(questBoardRow(quest)))} teslim alır` : `${Math.min(quest.have, quest.need)}/${quest.need}`}</p>
+                  </div>
+                ))}
+                <PageRow page={qSafe} pages={qPages} onPage={setQuestPage} />
+              </>
+            );
+          })()}
         </div>
       ) : charTab === "skills" ? (
         <div className={chosenTree ? "skill-board grid min-w-0 grid-cols-1 items-start gap-3" : "skill-board grid min-w-0 grid-cols-2 items-start gap-3"}>
@@ -2571,7 +3338,7 @@ function Character() {
                         <b className="tabular-nums text-gold">{skillTier(rank)}</b>
                         <button
                           type="button"
-                          disabled={level < 5 || skillPoints <= 0 || rank >= SKILL_MAX}
+                          disabled={level < 5 || !mentored || skillPoints <= 0 || rank >= SKILL_MAX}
                           className="h-7 w-7 rounded-md border border-border text-gold disabled:opacity-30"
                           onClick={() => useRpg.getState().learnSkill(sk.id)}
                         >
@@ -2674,22 +3441,51 @@ const SHOP_TITLE: Record<string, string> = {
 function QuestBoard() {
   const quests = useRpg((s) => s.quests);
   const shop = useRpg((s) => s.shop);
+  const boardFor = useRpg((s) => s.boardFor);
+  const boardMap = useRpg((s) => s.boardMap);
   const mentor = useRpg((s) => s.mentor);
-  const map = shop === "herald" ? mentor || "koy2" : "koy";
-  const realm = REALMS.find((row) => row.id === map);
-  const open = quests.find((quest) => !quest.claimed && (quest.map === map || quest.map == null));
+  const level = useRpg((s) => s.level);
+  const giver = boardFor || (shop === "herald" ? "herald" : shop === "guard" ? "guard" : null);
+  const mapId = giver === "herald" ? (boardMap || questMapFor("herald", mentor)) : "koy";
+  const ready = giver ? readyForNpc(quests, giver, mapId) : null;
+  const offer = giver ? offerForNpc(quests, level, giver, mapId) : null;
+  const active = giver ? activeForNpc(quests, giver, mapId) : null;
+  const story = nextStoryRow(quests);
+  const locked = giver && story && questMatchesNpc(story, giver, mapId) && level < story.min ? story : null;
+  const elsewhere = quests.find((quest) => !quest.claimed && (quest.done || quest.have >= quest.need) && !questMatchesNpc(questBoardRow(quest), giver, mapId));
+  const title = giver === "stable" ? "Seyis" : giver === "fisher" ? "Balıkçı" : giver === "smith" ? "Demirci" : giver === "market" ? "Satıcı" : giver === "miner" ? "Madenci" : giver === "craft" ? "Üretimci" : giver === "herald" ? "Görevli" : "Köy Muhafızı";
   return (
-    <Shell title={realm?.name ?? "Görev"} className="w-[min(24rem,92vw)]">
-      {open?.done ? (
+    <Shell title={title} className="w-[min(24rem,92vw)]">
+      {ready ? (
         <div className="rounded-md border border-border bg-bg p-2 text-sm break-words">
-          <p className="text-gold">{open.title}</p>
-          <p className="text-muted">{open.detail}</p>
+          <p className="text-gold">{ready.title}</p>
+          <p className="text-muted">{ready.detail}</p>
+          <p className="text-gold">{ready.have}/{ready.need} · teslim</p>
           <button type="button" className="mt-2 rounded-md border border-gold px-3 py-2 text-gold" onClick={() => useRpg.getState().claimQuest()}>
-            Görevi tamamla
+            Görevi teslim et
           </button>
         </div>
+      ) : offer ? (
+        <div className="rounded-md border border-border bg-bg p-2 text-sm break-words">
+          <p className="text-gold">{offer.title || offer.name}</p>
+          <p className="text-muted">{offer.name}. Sv.{offer.min} · {offer.xp} XP · {offer.gold} altın</p>
+          <button type="button" className="mt-2 rounded-md border border-gold px-3 py-2 text-gold" onClick={() => useRpg.getState().takeGiverQuest()}>
+            Görevi al
+          </button>
+        </div>
+      ) : active && !active.done && active.have < active.need ? (
+        <div className="rounded-md border border-border bg-bg p-2 text-sm break-words">
+          <p className="text-gold">{active.title}</p>
+          <p className="text-muted">{active.detail}</p>
+          <p>{Math.min(active.have, active.need)}/{active.need}</p>
+          <p className="mt-2 text-muted">Bitince aynı kişiye teslim et.</p>
+        </div>
+      ) : locked ? (
+        <p className="text-sm text-muted">{locked.name} için seviye {locked.min} gerekir.</p>
+      ) : elsewhere ? (
+        <p className="text-sm text-muted">{elsewhere.title} — {giverLabel(questGiver(questBoardRow(elsewhere)))} teslim alır.</p>
       ) : (
-        <p className="text-sm text-muted">Teslim edilecek görev yok. Görevler ilerledikçe kendiliğinden verilir.</p>
+        <p className="text-sm text-muted">Bu kişide alınacak veya teslim edilecek görev yok.</p>
       )}
     </Shell>
   );
@@ -2728,56 +3524,86 @@ function GateBoard() {
 
 function StallShop() {
   const stall = useRpg((s) => s.stall) ?? [];
+  const [pending, setPending] = useState<number | null>(null);
   const [price, setPrice] = useState("100");
   const [picked, setPicked] = useState<string | null>(null);
+  const slots = Array.from({ length: 12 }, (_, i) => stall[i] ?? null);
   return (
-    <Shell title="Pazar" className="w-[min(28rem,96vw)]">
-      <p className="mb-2 text-xs text-muted">Envanterden eşyayı buraya sürükle, fiyatı kendin yaz. Tezgah karakterinin yanında durur. Bir süre sonra bir gezgin en ucuz ilanı satın alır.</p>
-      <div
-        className="mb-2 min-h-16 rounded-md border border-dashed border-border bg-bg p-2 text-sm"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          const token = readCarry();
-          const raw = e.dataTransfer.getData("text/plain");
-          const from = token?.kind === "bag" ? token.index : raw.startsWith("bag:") ? Number(raw.slice(4)) : -1;
-          if (from >= 0) useRpg.getState().listStall(from, Number(price));
-          setCarry(null);
-        }}
-      >
-        Eşyayı buraya bırak
-      </div>
-      <label className="mb-2 flex items-center gap-2 text-sm">
-        Fiyat
-        <input className="w-24 rounded-md border border-border bg-bg px-2 py-1" value={price} onChange={(e) => setPrice(e.target.value)} />
-      </label>
-      <div className="flex gap-2">
-        <button type="button" className="rounded-md border border-gold px-3 py-2 text-sm text-gold" onClick={() => setPrice(price)}>
-          Satışa koy
-        </button>
-        <button type="button" className="rounded-md border border-border px-3 py-2 text-sm" onClick={() => { setCarry(null); setPicked(null); }}>
-          İptal
-        </button>
-      </div>
-      <div className="mt-3 flex flex-col gap-1">
-        {stall.map((row) => (
-          <div key={row.uid}>
-            <button type="button" className="w-full rounded-md border border-border px-2 py-2 text-left text-sm" onClick={() => setPicked(picked === row.uid ? null : row.uid)}>
-              {row.item.name} · {row.price} altın
-            </button>
-            {picked === row.uid ? (
-              <div className="mt-1 flex gap-2">
-                <button type="button" className="rounded-md border border-border px-2 py-1 text-xs" onClick={() => setPicked(null)}>
-                  İptal
-                </button>
-                <button type="button" className="rounded-md border border-gold px-2 py-1 text-xs text-gold" onClick={() => { useRpg.getState().unlistStall(row.uid); setPicked(null); }}>
-                  Satıştan kaldır
-                </button>
-              </div>
-            ) : null}
-          </div>
+    <Shell title="Pazar" className="w-[min(22rem,92vw)]" stall>
+      <p className="mb-2 text-xs text-muted">Boş yuvaya sürükle. Fiyat penceresi açılır, Tamam deyince satışa çıkar.</p>
+      <div className="stall-grid">
+        {slots.map((row, i) => (
+          <button
+            key={row?.uid ?? `empty-${i}`}
+            type="button"
+            className="octo-slot"
+            onClick={() => row && setPicked(picked === row.uid ? null : row.uid)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (row) return;
+              const token = readCarry();
+              const raw = e.dataTransfer.getData("text/plain");
+              const from = token?.kind === "bag" ? token.index : raw.startsWith("bag:") ? Number(raw.slice(4)) : -1;
+              if (from >= 0) {
+                setPending(from);
+                setPrice("100");
+              }
+              setCarry(null);
+            }}
+          >
+            {row ? (
+              <>
+                <ItemMark item={row.item} />
+                <span className="slot-count">{row.price}</span>
+              </>
+            ) : (
+              <span className="text-muted">Boş</span>
+            )}
+          </button>
         ))}
       </div>
+      {picked ? (
+        <button type="button" className="mt-2 rounded-md border border-gold px-2 py-1 text-xs text-gold" onClick={() => { useRpg.getState().unlistStall(picked); setPicked(null); }}>
+          Satıştan kaldır
+        </button>
+      ) : null}
+      <button type="button" className="mt-2 w-full rounded-md border border-gold px-3 py-2 text-sm text-gold" onClick={() => useRpg.getState().closeStall()}>
+        Pazarı Kapat
+      </button>
+      {pending != null
+        ? createPortal(
+            <div className="pointer-events-auto fixed inset-0 z-[90] grid place-items-center bg-black/55 p-4" data-ui onPointerDown={(e) => e.stopPropagation()}>
+              <form
+                className="w-[min(16rem,86vw)] rounded-xl border border-gold bg-surface p-4 text-center"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  useRpg.getState().listStall(pending, Number(price) || 1);
+                  setPending(null);
+                }}
+              >
+                <p className="mb-2 text-sm text-gold">Fiyat</p>
+                <input
+                  autoFocus
+                  inputMode="numeric"
+                  className="mb-3 w-full rounded-md border border-border bg-bg px-2 py-2 text-center text-sm"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value.replace(/[^\d]/g, "").slice(0, 9))}
+                />
+                <div className="flex justify-center gap-2">
+                  <button type="submit" className="rounded-md border border-gold px-3 py-2 text-sm text-gold">
+                    Tamam
+                  </button>
+                  <button type="button" className="rounded-md border border-border px-3 py-2 text-sm" onClick={() => setPending(null)}>
+                    Vazgeç
+                  </button>
+                </div>
+              </form>
+            </div>,
+            document.body,
+          )
+        : null}
     </Shell>
   );
 }
@@ -2827,73 +3653,99 @@ function MapLoad() {
   );
 }
 
+const SHOP_PAGE = 5;
+const CLASS_CHIPS = [
+  ["hepsi", "Hepsi"],
+  ["savasci", "Savaşçı"],
+  ["okcu", "Okçu"],
+  ["buyucu", "Büyücü"],
+  ["ninja", "Ninja"],
+] as const;
+
+function PageRow({ page, pages, onPage }: { page: number; pages: number; onPage: (n: number) => void }) {
+  if (pages <= 1) return null;
+  return (
+    <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+      <button type="button" disabled={page <= 0} className="rounded-md border border-border px-2 py-1 disabled:opacity-40" onClick={() => onPage(page - 1)}>
+        Önceki
+      </button>
+      <span className="text-muted">
+        {page + 1} / {pages}
+      </span>
+      <button type="button" disabled={page >= pages - 1} className="rounded-md border border-border px-2 py-1 disabled:opacity-40" onClick={() => onPage(page + 1)}>
+        Sonraki
+      </button>
+    </div>
+  );
+}
+
+function ClassChips({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  return (
+    <div className="mb-2 flex flex-wrap gap-1">
+      {CLASS_CHIPS.map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          className={value === id ? "rounded-md border border-gold px-2 py-1 text-xs text-gold" : "rounded-md border border-border px-2 py-1 text-xs text-muted"}
+          onClick={() => onChange(id)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function BazaarShop() {
   const gold = useRpg((s) => s.gold);
-  const stall = useRpg((s) => s.stall) ?? [];
+  const boards = useSyncExternalStore(subscribeField, marketBoards, marketBoards);
   const [query, setQuery] = useState("");
-  const [slot, setSlot] = useState("hepsi");
-  const [tip, setTip] = useState<{ item: Item; x: number; y: number } | null>(null);
+  const [page, setPage] = useState(0);
   const q = query.trim().toLocaleLowerCase("tr");
-  const mine = stall.filter((row) => {
-    if (slot !== "hepsi" && row.item.slot !== slot) return false;
-    if (!q) return true;
-    return row.item.name.toLocaleLowerCase("tr").includes(q);
-  });
-  const offers = BAZAAR_OFFERS.filter((row) => {
-    if (slot !== "hepsi" && row.slot !== slot) return false;
-    if (!q) return true;
-    return row.name.toLocaleLowerCase("tr").includes(q);
-  });
-  const slots = ["hepsi", "weapon", "armor", "helmet", "belt", "earring", "necklace", "bracelet", "boots", "ring", "gloves"];
+  const remote = boards.flatMap((board) =>
+    board.items.flatMap((listing) => {
+      const name = listing.item?.name || "Eşya";
+      const nick = board.nick || "Oyuncu";
+      if (q && !name.toLocaleLowerCase("tr").includes(q) && !nick.toLocaleLowerCase("tr").includes(q)) return [];
+      return [{ key: `${board.id}-${listing.uid}`, boardId: board.id, nick, listing }];
+    }),
+  );
+  const pages = Math.max(1, Math.ceil(remote.length / SHOP_PAGE));
+  const safe = Math.min(page, pages - 1);
+  const view = remote.slice(safe * SHOP_PAGE, safe * SHOP_PAGE + SHOP_PAGE);
+  const buy = (row: (typeof remote)[number]) => {
+    openAsk(`${row.listing.item.name} · ${row.nick}\n${row.listing.price} altın. Satın almak istiyor musun?`, () => {
+      askStallBuy(row.boardId, row.listing.uid, row.listing.price, row.listing.item);
+    });
+  };
   return (
-    <Shell title="Hızlı Pazar" className="w-[min(32rem,96vw)]">
+    <Shell title="Hızlı Pazar" className="w-[min(22rem,92vw)]">
       <p className="mb-2 text-sm text-gold">{gold} Altın</p>
-      <input className="mb-2 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm" placeholder="Ara" value={query} onChange={(e) => setQuery(e.target.value)} />
-      <div className="mb-2 flex flex-wrap gap-1">
-        {slots.map((id) => (
-          <button key={id} type="button" className={slot === id ? "rounded-md border border-gold px-2 py-1 text-xs text-gold" : "rounded-md border border-border px-2 py-1 text-xs text-muted"} onClick={() => setSlot(id)}>
-            {id === "hepsi" ? "Hepsi" : SLOT_LABEL[id as EquipSlot] ?? id}
-          </button>
-        ))}
-      </div>
-      <div className="flex max-h-[46dvh] flex-col gap-2 overflow-x-hidden overflow-y-auto">
-        {mine.map((row) => (
-          <div key={row.uid} className="rounded-md border border-border bg-bg px-2 py-2 text-sm" onMouseEnter={(e) => setTip({ item: row.item, x: e.clientX, y: e.clientY })} onMouseMove={(e) => setTip({ item: row.item, x: e.clientX, y: e.clientY })} onMouseLeave={() => setTip(null)}>
-            <p className="break-words text-gold">{row.item.name}</p>
-            <p className="text-xs text-muted">Senin ilanın · {row.price} altın</p>
+      <p className="mb-2 text-xs text-muted">Yalnızca şu an oyundaki diğer oyuncuların pazarları. Sağ tık ya da Yanına Al.</p>
+      <input className="mb-2 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm" placeholder="Ara" value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} />
+      <div className="flex flex-col gap-2 overflow-hidden">
+        {view.map((row) => (
+          <div
+            key={row.key}
+            className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-border bg-bg px-2 py-2 text-sm"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              buy(row);
+            }}
+          >
+            <ItemMark item={row.listing.item} />
+            <span className="min-w-0">
+              <span className="block break-words text-gold">{displayName(row.listing.item)}</span>
+              <span className="block text-[11px] text-muted">{row.nick} · {row.listing.price} altın</span>
+            </span>
+            <button type="button" className="rounded-md border border-gold px-2 py-1 text-xs text-gold" onClick={() => buy(row)}>
+              Yanına Al
+            </button>
           </div>
         ))}
-        {offers.map((row) => {
-          const preview = {
-            uid: row.id,
-            id: row.id,
-            name: row.name,
-            slot: row.slot as EquipSlot,
-            level: row.level,
-            plus: 0,
-            str: row.str,
-            hp: row.hp,
-            ats: row.ats,
-            mvs: row.mvs,
-            ctp: 0,
-            desc: row.forClass === "hepsi" ? "Bütün Karakterler Kuşanabilir" : row.forClass === "savasci" ? "Savaşçı" : row.forClass === "okcu" ? "Okçu" : row.forClass === "buyucu" ? "Büyücü" : "Ninja",
-            req: row.level,
-          } as Item;
-          return (
-            <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md border border-border bg-bg px-2 py-2 text-sm" onMouseEnter={(e) => setTip({ item: preview, x: e.clientX, y: e.clientY })} onMouseMove={(e) => setTip({ item: preview, x: e.clientX, y: e.clientY })} onMouseLeave={() => setTip(null)}>
-              <span className="min-w-0 break-words">
-                {row.name}
-                <span className="block text-[11px] text-muted">{preview.desc} · Sv.{row.level}</span>
-              </span>
-              <span className="text-gold">{row.price}g</span>
-              <button type="button" disabled={gold < row.price} className="rounded-md border border-border px-2 py-1 disabled:opacity-40" onClick={() => useRpg.getState().buyOffer(row.id)}>
-                Al
-              </button>
-            </div>
-          );
-        })}
+        {remote.length === 0 ? <p className="text-xs text-muted">Şu an başka oyuncunun satışta eşyası yok.</p> : null}
       </div>
-      {tip ? <Tip item={tip.item} x={tip.x} y={tip.y} /> : null}
+      <PageRow page={safe} pages={pages} onPage={setPage} />
     </Shell>
   );
 }
@@ -2902,13 +3754,20 @@ function CraftShop() {
   const gold = useRpg((s) => s.gold);
   const level = useRpg((s) => s.level);
   const bag = useRpg((s) => s.bag);
+  const [klass, setKlass] = useState("hepsi");
+  const [page, setPage] = useState(0);
   const count = (id: string) => bag.reduce((sum, item) => sum + (item?.id === id ? item.count ?? 1 : 0), 0);
+  const rows = CRAFTS.filter((row) => klass === "hepsi" || row.forClass === "hepsi" || row.forClass === klass);
+  const pages = Math.max(1, Math.ceil(rows.length / SHOP_PAGE));
+  const safe = Math.min(page, pages - 1);
+  const view = rows.slice(safe * SHOP_PAGE, safe * SHOP_PAGE + SHOP_PAGE);
   return (
-    <Shell title="Üretim" className="w-[min(32rem,96vw)]">
+    <Shell title="Üretim" className="w-[min(22rem,92vw)]">
       <p className="mb-2 text-sm text-gold">{gold} Altın · Sv.{level}</p>
       <p className="mb-2 text-xs text-muted">30. seviyeden sonra maden, boss ganimeti ve altınla üretilir.</p>
-      <div className="flex max-h-[50dvh] flex-col gap-2 overflow-x-hidden overflow-y-auto">
-        {CRAFTS.map((row) => {
+      <ClassChips value={klass} onChange={(id) => { setKlass(id); setPage(0); }} />
+      <div className="flex flex-col gap-2 overflow-hidden">
+        {view.map((row) => {
           const ores = row.ores.map((pair) => {
             const id = String(pair[0]);
             const need = Number(pair[1]);
@@ -2927,6 +3786,7 @@ function CraftShop() {
           );
         })}
       </div>
+      <PageRow page={safe} pages={pages} onPage={setPage} />
     </Shell>
   );
 }
@@ -2939,22 +3799,33 @@ function TradeShop({ kind }: { kind: Exclude<ShopKind, "smith" | "depot" | "guar
   useSyncExternalStore(subscribeStudio, studioVersion, studioVersion);
   const tabs = TABS[kind] ?? [];
   const [tab, setTab] = useState(tabs[0]?.id ?? "");
+  const [klass, setKlass] = useState("hepsi");
+  const [page, setPage] = useState(0);
   const [tip, setTip] = useState<{ item: Item; x: number; y: number } | null>(null);
   const current = tabs.find((row) => row.id === tab) ?? tabs[0];
-  const rows = shopRows(kind, classId).filter((row) => !current || current.test(row.id, row.slot));
+  const classShop = kind === "weapon" || kind === "armor";
+  const rows = shopRows(kind, classId).filter((row) => !current || current.test(row.id, row.slot)).filter((row) => {
+    if (!classShop || klass === "hepsi") return true;
+    const mark = (row as { forClass?: string }).forClass || "hepsi";
+    return !mark || mark === "hepsi" || mark === klass;
+  });
+  const pages = Math.max(1, Math.ceil(rows.length / SHOP_PAGE));
+  const safe = Math.min(page, pages - 1);
+  const view = rows.slice(safe * SHOP_PAGE, safe * SHOP_PAGE + SHOP_PAGE);
   return (
-    <Shell title={SHOP_TITLE[kind] ?? "Dükkan"} className="w-[min(32rem,96vw)]" vendor>
+    <Shell title={SHOP_TITLE[kind] ?? "Dükkan"} className="w-[min(22rem,92vw)]" vendor>
       <p className="mb-2 text-sm text-gold">{gold} Altın</p>
       <p className="mb-2 text-xs text-muted">Eşyayı bu pencereye bırak. Altına çevrilir.</p>
       <div className="mb-2 flex flex-wrap gap-1">
         {tabs.map((row) => (
-          <button key={row.id} type="button" className={tab === row.id ? "rounded-md border border-gold px-2 py-1 text-xs text-gold" : "rounded-md border border-border px-2 py-1 text-xs text-muted"} onClick={() => setTab(row.id)}>
+          <button key={row.id} type="button" className={tab === row.id ? "rounded-md border border-gold px-2 py-1 text-xs text-gold" : "rounded-md border border-border px-2 py-1 text-xs text-muted"} onClick={() => { setTab(row.id); setPage(0); }}>
             {row.label}
           </button>
         ))}
       </div>
-      <div className="flex max-h-[50dvh] flex-col gap-2 overflow-auto">
-        {rows.map((row) => {
+      {classShop ? <ClassChips value={klass} onChange={(id) => { setKlass(id); setPage(0); }} /> : null}
+      <div className="flex flex-col gap-2 overflow-hidden">
+        {view.map((row) => {
           const preview = { ...row, uid: row.id, level: 1, plus: 0 } as Item;
           const price = priceOf(row.id, row.price ?? 0);
           return (
@@ -2989,6 +3860,7 @@ function TradeShop({ kind }: { kind: Exclude<ShopKind, "smith" | "depot" | "guar
           );
         })}
       </div>
+      <PageRow page={safe} pages={pages} onPage={setPage} />
       {tip ? <Tip item={tip.item} x={tip.x} y={tip.y} /> : null}
     </Shell>
   );
@@ -2999,16 +3871,20 @@ function DepotShop() {
   const depot = useRpg((s) => s.depot);
   const stage = useRpg((s) => s.bagStage);
   const [page, setPage] = useState(0);
+  const [depotPage, setDepotPage] = useState(0);
   const [tip, setTip] = useState<{ item: Item; x: number; y: number } | null>(null);
   const open = openBagCount(stage);
   const start = page * PAGE_SIZE;
+  const depotPages = Math.max(1, Math.ceil(depot.length / PAGE_SIZE));
+  const depotSafe = Math.min(depotPage, depotPages - 1);
+  const depotStart = depotSafe * PAGE_SIZE;
   return (
-    <Shell title="Depo" className="w-[min(40rem,96vw)]">
+    <Shell title="Depo" className="w-[min(36rem,96vw)]">
       <p className="mb-2 text-xs text-muted">Açık çantanı sürükle. Depo ayrı durur.</p>
       <div className="mb-2 flex gap-1">
-        {[0, 1, 2].map((n) => (
+        {Array.from({ length: Math.ceil(bag.length / PAGE_SIZE) }, (_, n) => (
           <button key={n} type="button" className={n === page ? "rounded-md border border-gold px-2 py-1 text-xs text-gold" : "rounded-md border border-border px-2 py-1 text-xs"} onClick={() => setPage(n)}>
-            Pencere {n + 1}
+            {["I", "II", "III", "IV", "V", "VI"][n] ?? n + 1}
           </button>
         ))}
       </div>
@@ -3050,7 +3926,9 @@ function DepotShop() {
         <div>
           <p className="mb-1 text-xs text-gold">Depo</p>
           <div className="grid grid-cols-4 gap-1" onDragOver={(e) => e.preventDefault()}>
-            {depot.map((item, index) => (
+            {depot.slice(depotStart, depotStart + PAGE_SIZE).map((item, offset) => {
+              const index = depotStart + offset;
+              return (
               <button
                 key={index}
                 type="button"
@@ -3073,8 +3951,10 @@ function DepotShop() {
               >
                 {item ? displayName(item) : ""}
               </button>
-            ))}
+              );
+            })}
           </div>
+          <PageRow page={depotSafe} pages={depotPages} onPage={setDepotPage} />
         </div>
       </div>
       {tip ? <Tip item={tip.item} x={tip.x} y={tip.y} /> : null}
@@ -3099,7 +3979,7 @@ function SmithShop() {
   return (
     <Shell title="Demirci" className="w-[min(36rem,96vw)]">
       <p className="mb-2 text-sm text-gold">{gold} Altın</p>
-      <p className="mb-2 text-xs text-muted">Eşya, güç taşı ve malzeme ayrı durur. Malzeme moblardan düşer. Envanter penceresini başlığından tutup kaydırabilirsin.</p>
+      <p className="mb-2 text-xs text-muted">Yalnızca eşyayı sürükle. Güç taşı ve yükseltme taşı envanterde varsa kendiliğinden yerleşir. +6 öncesi her taş olur. Tutmazsa taş durur, tekrar basılır.</p>
       <div className="grid grid-cols-3 gap-2">
         <SmithSlot which="item" title="+ Basılacak" item={item} onDrop={(raw) => take("item", raw)} />
         <SmithSlot which="stone" title="Güç Taşı" item={stone} onDrop={(raw) => take("stone", raw)} />

@@ -25,11 +25,11 @@ const PEER_TTL_SECONDS = 30;
 const SIGNAL_TTL_SECONDS = 60;
 
 const globalRef = globalThis as typeof globalThis & {
-  __rtcSchemaPromise__?: Promise<void>;
+  __rtcSchemaPromiseV2__?: Promise<void>;
 };
 
 function ensureSchema(sql: Sql): Promise<void> {
-  globalRef.__rtcSchemaPromise__ ??= (async () => {
+  globalRef.__rtcSchemaPromiseV2__ ??= (async () => {
     await sql.query(
       `CREATE TABLE IF NOT EXISTS webrtc_peers (
          room TEXT NOT NULL,
@@ -54,11 +54,18 @@ function ensureSchema(sql: Sql): Promise<void> {
       `CREATE INDEX IF NOT EXISTS webrtc_signals_inbox
          ON webrtc_signals (room, to_peer, id)`,
     );
+    await sql.query(
+      `CREATE TABLE IF NOT EXISTS webrtc_kicks (
+         room TEXT NOT NULL,
+         peer_id TEXT NOT NULL,
+         PRIMARY KEY (room, peer_id)
+       )`,
+    );
   })().catch((err) => {
-    globalRef.__rtcSchemaPromise__ = undefined;
+    globalRef.__rtcSchemaPromiseV2__ = undefined;
     throw err;
   });
-  return globalRef.__rtcSchemaPromise__;
+  return globalRef.__rtcSchemaPromiseV2__;
 }
 
 async function roster(sql: Sql, room: string): Promise<PeerRow[]> {
@@ -71,7 +78,32 @@ async function roster(sql: Sql, room: string): Promise<PeerRow[]> {
   return rows.map((r) => ({ id: r.peer_id, name: r.name }));
 }
 
+function accountPrefix(name: string): string | null {
+  if (!name.startsWith("u:")) return null;
+  const bar = name.indexOf("|");
+  if (bar < 3) return null;
+  const key = name.slice(2, bar);
+  if (!/^[a-zA-Z0-9_-]{1,40}$/.test(key) || key === "dev-user") return null;
+  return `u:${key}`;
+}
+
 async function touchPeer(sql: Sql, room: string, peer: string, name: string) {
+  const prefix = accountPrefix(name);
+  if (prefix) {
+    const others = await sql.query<{ peer_id: string }>(
+      `SELECT peer_id FROM webrtc_peers
+       WHERE room = $1 AND peer_id <> $2 AND split_part(name, '|', 1) = $3`,
+      [room, peer, prefix],
+    );
+    for (const row of others) {
+      await sql.query(
+        `INSERT INTO webrtc_kicks (room, peer_id) VALUES ($1, $2)
+         ON CONFLICT (room, peer_id) DO NOTHING`,
+        [room, row.peer_id],
+      );
+      await sql.query(`DELETE FROM webrtc_peers WHERE room = $1 AND peer_id = $2`, [room, row.peer_id]);
+    }
+  }
   await sql.query(
     `INSERT INTO webrtc_peers (room, peer_id, name, last_seen)
      VALUES ($1, $2, $3, now())
@@ -118,6 +150,16 @@ async function handleGet(url: URL): Promise<Response> {
 
   const sql = await getSql();
   await ensureSchema(sql);
+  const kicked = await sql.query<{ peer_id: string }>(
+    `SELECT peer_id FROM webrtc_kicks WHERE room = $1 AND peer_id = $2`,
+    [room, peer],
+  );
+  if (kicked.length) {
+    await sql.query(`DELETE FROM webrtc_kicks WHERE room = $1 AND peer_id = $2`, [room, peer]);
+    await sql.query(`DELETE FROM webrtc_peers WHERE room = $1 AND peer_id = $2`, [room, peer]);
+    const gone: RtcPollResponse = { peers: [], signals: [], kicked: true };
+    return json(gone);
+  }
   if (since === 0 || Math.random() < 0.02) await prune(sql);
   await touchPeer(sql, room, peer, name);
   const rows = await sql.query<{

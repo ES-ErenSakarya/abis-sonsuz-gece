@@ -8,6 +8,7 @@ import { P2PRoom, type PeerInfo } from "./p2p";
 export interface UseP2PRoomOptions {
   room?: string;
   name?: string;
+  onKicked?: () => void;
 }
 
 export interface P2PRoomHandle {
@@ -34,6 +35,8 @@ export function useP2PRoom(options: UseP2PRoomOptions = {}): P2PRoomHandle {
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [joined, setJoined] = useState(false);
   const roomRef = useRef<P2PRoom | null>(null);
+  const kickedRef = useRef(options.onKicked);
+  kickedRef.current = options.onKicked;
   const listeners = useRef(
     new Set<(from: string, data: unknown, channel: "state" | "reliable") => void>(),
   );
@@ -48,6 +51,7 @@ export function useP2PRoom(options: UseP2PRoomOptions = {}): P2PRoomHandle {
         for (const fn of listeners.current) fn(from, data, channel);
       },
       onConnected: () => setJoined(true),
+      onKicked: () => kickedRef.current?.(),
     });
     roomRef.current = p2p;
     void p2p.join();

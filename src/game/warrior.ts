@@ -422,8 +422,8 @@ export function poseFighter(
     }
   } else if (style === "bow") {
     const pull = swing > 0 ? extend : 0;
-    reach(rT, "RightArm", 0.46, 0.02, 0.16);
-    reach(lT, "LeftArm", 0.42 - pull * 0.3, 0.02, -0.14);
+    reach(rT, "RightArm", 0.04 + pull * 0.34, -0.5 + pull * 0.72, -0.22 + pull * 0.08);
+    reach(lT, "LeftArm", 0.04 + pull * 0.26, -0.48 + pull * 0.56, 0.18 - pull * 0.28);
   } else if (style === "staff") {
     if (swing <= 0) {
       reach(lT, "LeftArm", 0.22, 0.1, 0.08);
@@ -511,8 +511,9 @@ export function poseFighter(
     _poleR.copy(_down).addScaledVector(left, -0.4).addScaledVector(fwd, -0.45);
   }
   if (style === "bow") {
-    _poleR.copy(_down).addScaledVector(fwd, 0.15);
-    _poleL.copy(left).addScaledVector(_up, 0.35);
+    const pull = swing > 0 ? punchExtend(swing) : 0;
+    _poleR.copy(_down).addScaledVector(fwd, 0.08 + pull * 0.35);
+    _poleL.copy(_down).addScaledVector(left, 0.2).addScaledVector(_up, pull * 0.35);
   }
   if (style === "dagger") {
     _poleR.copy(fwd).multiplyScalar(-1).addScaledVector(left, -0.38).addScaledVector(_down, 0.22);
@@ -535,8 +536,12 @@ export function poseFighter(
       pointHand(model, "RightHand", fingersFwd, _down);
     }
   } else if (style === "bow") {
-    pointHand(model, "RightHand", _up, _jab.copy(fwd).negate());
-    pointHand(model, "LeftHand", _in.copy(fwd).negate(), _down);
+    const pull = swing > 0 ? punchExtend(swing) : 0;
+    if (pull > 0.02) _jab.copy(fwd).multiplyScalar(0.25 + pull).addScaledVector(_up, 0.2 + pull * 0.7);
+    else _jab.copy(_down);
+    _in.copy(left);
+    pointHand(model, "RightHand", _jab, _in);
+    pointHand(model, "LeftHand", pull > 0.08 ? fwd : fingersFwd, _down);
   } else if (style === "staff") {
     const sign = combo % 2 === 0 ? 1 : -1;
     const across = swing > 0 ? -sign + sign * 2 * arc : 0;
@@ -590,7 +595,7 @@ export function poseFighter(
   model.position.y = rest.groundY;
   model.updateMatrixWorld(true);
   if (mounted) {
-    model.position.y = rest.groundY + 0.38 + (moving ? Math.abs(Math.sin(cycle * 2)) * 0.03 : 0);
+    model.position.y = rest.groundY + 0.06;
   } else {
     const fy = Math.min(
       bone(model, "LeftFoot")!.getWorldPosition(_p).y,

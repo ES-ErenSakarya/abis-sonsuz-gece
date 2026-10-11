@@ -1012,17 +1012,21 @@ export function mitigate(mobLevel, playerLevel, dmg) {
 	else if (gap < 0) mult = Math.min(2.2, 1 + -gap * 0.035);
 	return Math.max(1, Math.round(dmg * mult));
 }
-export function mobBite(mobLevel, playerLevel, playerHp) {
-	const gap = mobLevel - playerLevel;
-	let ratio = 0.13;
-	if (gap > 0) ratio = Math.min(1.65, 0.13 * Math.pow(1.05, gap));
-	else if (gap < 0) ratio = Math.max(0.015, 0.13 * Math.pow(0.9, -gap));
-	const jitter = 0.92 + Math.random() * 0.16;
-	return Math.max(1, Math.round(Math.max(1, playerHp) * ratio * jitter));
+export function mobBite(mobLevel, playerLevel) {
+	const base = 5 + mobLevel * 1.65;
+	const gap = playerLevel - mobLevel;
+	let scale = 1;
+	if (gap > 0) scale = Math.pow(0.84, Math.min(36, gap));
+	else if (gap < 0) scale = Math.min(2.4, Math.pow(1.07, Math.min(20, -gap)));
+	const jitter = 0.9 + Math.random() * 0.2;
+	return Math.max(1, Math.round(base * scale * jitter));
 }
-export function mobXp(level, boss) {
+export function mobXp(level, boss, playerLevel) {
 	const xp = Math.round(20 + Math.max(1, level) * 8);
-	return boss ? xp * 8 : xp;
+	const base = boss ? xp * 8 : xp;
+	const gap = Math.max(0, Math.floor(playerLevel || level) - Math.floor(level));
+	const scale = Math.pow(0.82, Math.min(30, gap));
+	return Math.max(1, Math.round(base * scale));
 }
 export function createBeast(x, z, id = "beast", pack = 0, spec = SPECIES[2]) {
 	const root = new THREE.Group();
@@ -1065,6 +1069,7 @@ export function createBeast(x, z, id = "beast", pack = 0, spec = SPECIES[2]) {
 		jaw: made.jaw,
 		body: made.body,
 		boss: false,
+		returning: false,
 		drift: Math.random() * Math.PI * 2,
 		roam: 100
 	};
@@ -1142,8 +1147,42 @@ export function tickBeast(b, dt, px, pz, cam, puppet = false) {
 	const pace = b.speed * (b.slow > 0 ? .45 : 1);
 	if (b.shake > 0) {
 		b.shake -= dt;
-		b.body.position.y = Math.sin(b.shake * 40) * .05;
+		b.body.position.y = Math.sin(b.shake * 40) * .08;
 	} else b.body.position.y = 0;
+	if (b.flash > 0) {
+		b.flash = Math.max(0, b.flash - dt);
+		const hot = b.flash > 0;
+		if (b.body) {
+			b.body.traverse((obj) => {
+				if (!obj.isMesh || !obj.material || !obj.material.emissive) return;
+				obj.material.emissive.set(hot ? "#ff4a32" : "#000000");
+				obj.material.emissiveIntensity = hot ? 1.1 : 0;
+			});
+		}
+	}
+	const homeNow = Math.hypot(b.root.position.x - b.homeX, b.root.position.z - b.homeZ);
+	if (b.returning || (b.anger && homeNow > 15)) {
+		b.returning = true;
+		b.anger = false;
+		if (homeNow < 0.7) {
+			b.returning = false;
+			b.root.position.x = b.homeX;
+			b.root.position.z = b.homeZ;
+			return false;
+		}
+		const face = Math.atan2(b.homeX - b.root.position.x, b.homeZ - b.root.position.z);
+		b.yaw = damp(b.yaw, face, 4.2, dt);
+		b.root.rotation.y = b.yaw - Math.PI / 2;
+		const sp = pace * 1.5;
+		stepOutside(b, b.root.position.x + Math.sin(b.yaw) * sp * dt, b.root.position.z + Math.cos(b.yaw) * sp * dt);
+		const stride = Math.sin(b.phase * 8);
+		b.legs.forEach((leg, i) => {
+			const sign = i % 2 === 0 ? 1 : -1;
+			const pair = i < 2 ? 1 : -1;
+			leg.rotation.z = stride * sign * pair * .5;
+		});
+		return false;
+	}
 	if (!b.anger && b.patrol && b.patrol.length > 1) {
 		b.patrolI = b.patrolI || 0;
 		const point = b.patrol[b.patrolI % b.patrol.length];
@@ -1187,10 +1226,9 @@ export function tickBeast(b, dt, px, pz, cam, puppet = false) {
 		b.jaw.rotation.z *= .8;
 		return false;
 	}
-	const homeD = Math.hypot(b.root.position.x - b.homeX, b.root.position.z - b.homeZ);
-	const leash = b.boss ? 24 : 36;
-	if (dist > leash || homeD > (b.boss ? 30 : 72)) {
+	if (dist > 15) {
 		b.anger = false;
+		b.returning = true;
 		return false;
 	}
 	const face = Math.atan2(dx, dz);
@@ -1229,6 +1267,7 @@ export function hitBeast(b, dmg) {
 	if (!b.alive) return;
 	b.hp = Math.max(0, b.hp - dmg);
 	b.shake = .28;
+	b.flash = 0.28;
 	if (b.hp <= 0) {
 		b.alive = false;
 		b.respawn = 15;
@@ -1246,41 +1285,39 @@ export function weaponMesh(style) {
 	const wrap = surf("/textures/leather.jpg", "#3a2a1c", 0.84, 0.02, 2, 1);
 	const gripAt = (y = 0.05) => g.position.set(0, y, 0.012);
 	if (style === "bow") {
-		const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.016, 0.5, 8), wood);
-		upper.position.set(0, 0.28, -0.02);
-		upper.rotation.x = 0.32;
-		const lower = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.01, 0.5, 8), wood);
-		lower.position.set(0, -0.28, -0.02);
-		lower.rotation.x = -0.32;
-		const hornU = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 6), std("#e4d7c4", 0.4, 0.15));
-		hornU.position.set(0, 0.52, 0.02);
+		const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.018, 0.5, 6), wood);
+		upper.position.set(0, 0.25, 0);
+		const lower = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.011, 0.5, 6), wood);
+		lower.position.set(0, -0.25, 0);
+		const hornU = new THREE.Mesh(new THREE.SphereGeometry(0.016, 6, 5), std("#e4d7c4", 0.4, 0.15));
+		hornU.position.set(0, 0.5, 0);
 		const hornD = hornU.clone();
-		hornD.position.y = -0.52;
-		const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.14, 10), wrap);
+		hornD.position.set(0, -0.5, 0);
+		const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.12, 8), wrap);
 		const tipU = new THREE.Object3D();
 		tipU.name = "bow-tip-up";
-		tipU.position.set(0, 0.52, 0.04);
+		tipU.position.set(0, 0.5, 0.045);
 		const tipD = new THREE.Object3D();
 		tipD.name = "bow-tip-down";
-		tipD.position.set(0, -0.52, 0.04);
+		tipD.position.set(0, -0.5, 0.045);
 		const stringMat = std("#f3efe6", 0.35);
-		const stringGeo = new THREE.CylinderGeometry(0.0035, 0.0035, 1, 5);
+		const stringGeo = new THREE.CylinderGeometry(0.0035, 0.0035, 1, 4);
 		const stringTop = new THREE.Mesh(stringGeo, stringMat);
 		stringTop.name = "string-top";
 		const stringBot = new THREE.Mesh(stringGeo, stringMat);
 		stringBot.name = "string-bot";
 		const nock = new THREE.Group();
 		nock.name = "nocked";
-		const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.55, 6), wood);
+		const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 0.16, 5), wood);
 		shaft.rotation.x = Math.PI / 2;
-		const tip = new THREE.Mesh(new THREE.ConeGeometry(0.014, 0.08, 6), steel);
+		const tip = new THREE.Mesh(new THREE.ConeGeometry(0.005, 0.03, 5), steel);
 		tip.rotation.x = Math.PI / 2;
-		tip.position.z = -0.3;
-		const fletch = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.004, 0.06), std("#efe6d4", 0.6));
-		fletch.position.z = 0.22;
+		tip.position.z = -0.09;
+		const fletch = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.002, 0.018), std("#efe6d4", 0.6));
+		fletch.position.z = 0.07;
 		nock.add(shaft, tip, fletch);
 		g.add(upper, lower, hornU, hornD, grip, tipU, tipD, stringTop, stringBot, nock);
-		gripAt(0.05);
+		gripAt(0);
 	} else if (style === "staff") {
 		const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.024, 1.15, 10), wood);
 		shaft.position.y = 0.28;
@@ -1403,7 +1440,12 @@ var _bowUp = new THREE.Vector3(0, 1, 0);
 var _bowA = new THREE.Vector3();
 var _bowB = new THREE.Vector3();
 var _bowC = new THREE.Vector3();
+var _bowX = new THREE.Vector3();
+var _bowY = new THREE.Vector3();
+var _bowZ = new THREE.Vector3();
 var _bowQ = new THREE.Quaternion();
+var _bowInv = new THREE.Quaternion();
+var _bowM = new THREE.Matrix4();
 function spanString(mesh, from, to) {
 	_bowC.copy(to).sub(from);
 	const len = Math.max(0.05, _bowC.length());
@@ -1414,31 +1456,60 @@ function spanString(mesh, from, to) {
 	else mesh.quaternion.setFromUnitVectors(_bowUp, _bowC);
 }
 export function syncBow(model, extend) {
-	const bow = model.userData.gear?.weapon;
+	let bow = model.userData.gear?.weapon;
 	if (!bow || bow.userData.kind !== "bow") return;
+	if (!bow.userData.straight) {
+		const host = bow.parent;
+		const fresh = weaponMesh("bow");
+		fresh.userData.kind = "bow";
+		fresh.userData.straight = 1;
+		if (host) {
+			host.remove(bow);
+			host.add(fresh);
+		}
+		model.userData.gear.weapon = fresh;
+		bow = fresh;
+	}
 	const tipU = bow.getObjectByName("bow-tip-up");
 	const tipD = bow.getObjectByName("bow-tip-down");
 	const up = bow.getObjectByName("string-top");
 	const lo = bow.getObjectByName("string-bot");
 	const nock = bow.getObjectByName("nocked");
-	const hand = model.getObjectByName("LeftHand");
-	if (!tipU || !tipD || !up || !lo || !nock) return;
-	bow.updateWorldMatrix(true, false);
-	if (hand) {
-		hand.getWorldPosition(_bowA);
-		hand.getWorldQuaternion(_bowQ);
-		_bowB.set(0, 1, 0).applyQuaternion(_bowQ);
-		_bowA.addScaledVector(_bowB, 0.06);
-	} else {
-		bow.localToWorld(_bowA.set(0, 0.02, 0.12 + Math.max(0, extend) * 0.28));
+	const parent = bow.parent;
+	if (!tipU || !tipD || !up || !lo || !nock || !parent) return;
+	const lift = Math.max(0, Math.min(1, extend || 0));
+	bow.position.set(0, 0.02, -0.045);
+	bow.scale.set(1, 1, 1);
+	const hand = bow.parent;
+	hand.updateWorldMatrix(true, false);
+	model.getWorldDirection(_bowA);
+	_bowY.set(0, -1, 0);
+	if (lift > 0.001) {
+		_bowB.copy(_bowA).addScaledVector(_bowUp, 0.42 + lift * 0.35).normalize();
+		_bowY.lerp(_bowB, lift).normalize();
 	}
-	const local = bow.worldToLocal(_bowA);
-	local.x = Math.max(-0.08, Math.min(0.08, local.x));
-	local.y = Math.max(-0.08, Math.min(0.08, local.y));
-	spanString(up, tipU.position, local);
-	spanString(lo, tipD.position, local);
+	_bowZ.copy(_bowA).negate();
+	_bowZ.y = 0;
+	if (_bowZ.lengthSq() < 1e-8) _bowZ.set(1, 0, 0);
+	_bowZ.normalize();
+	_bowZ.addScaledVector(_bowY, -_bowZ.dot(_bowY));
+	if (_bowZ.lengthSq() < 1e-8) _bowZ.set(1, 0, 0);
+	_bowZ.normalize();
+	_bowX.crossVectors(_bowY, _bowZ).normalize();
+	_bowZ.crossVectors(_bowX, _bowY).normalize();
+	_bowM.makeBasis(_bowX, _bowY, _bowZ);
+	_bowQ.setFromRotationMatrix(_bowM);
+	hand.getWorldQuaternion(_bowInv);
+	bow.quaternion.copy(_bowInv.invert()).multiply(_bowQ);
+	bow.updateMatrix();
+	bow.matrixWorld.multiplyMatrices(hand.matrixWorld, bow.matrix);
+	const local = _bowB.set(0, 0.06, 0.05);
+	spanString(up, tipU.position, _bowA.set(0, 0, 0.05 + lift * 0.04));
+	spanString(lo, tipD.position, _bowA);
 	nock.position.copy(local);
-	nock.quaternion.identity();
+	nock.rotation.set(-Math.PI / 2, 0, 0);
+	nock.scale.setScalar(0.42);
+	nock.visible = lift > 0.12;
 }
 var NIGHT = "#2a2e38";
 var GOLD = "#8a7a40";
@@ -1481,6 +1552,7 @@ export function syncGear(model, equipped) {
 		if (slot === "weapon") {
 			const g = weaponMesh(style);
 			g.userData.kind = style;
+			if (style === "bow") g.userData.straight = 1;
 			if (style === "dagger") seatDagger(g, 1);
 			return g;
 		}

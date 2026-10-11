@@ -90,8 +90,8 @@ export function hudPins(screenW: number, screenH: number) {
     map: new HudAnchor("top-right", 0.02, portrait || short ? 0.085 : 0.07),
     hotbar: new HudAnchor("bottom-center", 0, portrait ? 0.155 : short ? 0.2 : 0.02),
     quests: new HudAnchor("top-right", 0.02, portrait || short ? 0.26 : 0.3),
-    chat: new HudAnchor("bottom-center", 0, portrait ? 0.2 : short ? 0.28 : 0.11),
-    plusLeft: new HudAnchor("bottom-left", 0.02, portrait ? 0.2 : 0.16),
+    chat: new HudAnchor("bottom-center", 0, portrait ? 0.16 : short ? 0.2 : 0.055),
+    plusLeft: new HudAnchor("bottom-left", 0.02, portrait ? 0.08 : 0.04),
     plusRight: new HudAnchor("bottom-right", 0.02, portrait ? 0.2 : 0.1),
     settings: new HudAnchor("top-right", 0.02, 0.012),
   };

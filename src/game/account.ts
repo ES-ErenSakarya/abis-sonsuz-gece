@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getSql } from "@/lib/db";
 import { authMiddleware } from "@/lib/auth/middleware";
 import type { CharacterSave, Item, Quest, StatKey } from "@/game/rpg";
-import { asClassId } from "@/game/rpg";
+import { asClassId, BAG_SIZE } from "@/game/rpg";
 
 export type CharacterRow = CharacterSave & { id: string; slot: number };
 
@@ -23,6 +23,7 @@ function splitInvested(raw: unknown): {
   skillPoints: number;
   chosenTree: string | null;
   hotbar: (string | null)[];
+  pots: { hp: Item | null; mp: Item | null };
   quests: Quest[];
   depot: (Item | null)[];
   blocked: string[];
@@ -31,6 +32,21 @@ function splitInvested(raw: unknown): {
   bonusUntil: number;
   x?: number;
   z?: number;
+  stall: CharacterSave["stall"];
+  stallSpot: { x: number; z: number } | null;
+  steed: CharacterSave["steed"];
+  mountItem: Item | null;
+  riding: boolean;
+  greeted: boolean;
+  mentored: boolean;
+  fame: number;
+  kills: number;
+  mines: number;
+  fish: number;
+  damage: number;
+  bossKills: number;
+  duelWins: number;
+  goldEarned: number;
 } {
   const obj = asJson<Record<string, unknown>>(raw, {});
   const num = (key: string) => (typeof obj[key] === "number" ? (obj[key] as number) : 0);
@@ -46,12 +62,19 @@ function splitInvested(raw: unknown): {
   const quests = Array.isArray(obj.quests) ? (obj.quests as Quest[]) : [];
   const depot = Array.isArray(obj.depot) ? (obj.depot as (Item | null)[]) : [];
   const blocked = Array.isArray(obj.blocked) ? obj.blocked.filter((id) => typeof id === "string") : [];
+  const spot = obj.stallSpot;
+  const stallSpot = spot && typeof spot === "object" && typeof (spot as { x?: unknown }).x === "number" && typeof (spot as { z?: unknown }).z === "number"
+    ? { x: (spot as { x: number }).x, z: (spot as { z: number }).z }
+    : null;
+  const steed = obj.steed && typeof obj.steed === "object" && typeof (obj.steed as { id?: unknown }).id === "string" ? (obj.steed as CharacterSave["steed"]) : null;
+  const mountItem = obj.mountItem && typeof obj.mountItem === "object" && typeof (obj.mountItem as { id?: unknown }).id === "string" ? (obj.mountItem as Item) : null;
   return {
     invested: { str: num("str"), hp: num("hp"), ats: num("ats"), mvs: num("mvs"), ctp: num("ctp"), mag: num("mag"), mana: num("mana") },
     skills,
     skillPoints: num("skillPoints"),
     chosenTree: typeof obj.chosenTree === "string" ? obj.chosenTree : null,
     hotbar,
+    pots: obj.pots && typeof obj.pots === "object" ? (obj.pots as { hp: Item | null; mp: Item | null }) : { hp: null, mp: null },
     quests,
     depot,
     blocked,
@@ -60,6 +83,21 @@ function splitInvested(raw: unknown): {
     bonusUntil: num("bonusUntil"),
     x: typeof obj.x === "number" && Number.isFinite(obj.x) ? obj.x : undefined,
     z: typeof obj.z === "number" && Number.isFinite(obj.z) ? obj.z : undefined,
+    stall: Array.isArray(obj.stall) ? (obj.stall as NonNullable<CharacterSave["stall"]>) : null,
+    stallSpot,
+    steed,
+    mountItem,
+    riding: obj.riding === true,
+    greeted: obj.greeted === true,
+    mentored: obj.mentored === true,
+    fame: num("fame"),
+    kills: num("kills"),
+    mines: num("mines"),
+    fish: num("fish"),
+    damage: num("damage"),
+    bossKills: num("bossKills"),
+    duelWins: num("duelWins"),
+    goldEarned: num("goldEarned"),
   };
 }
 
@@ -95,6 +133,7 @@ function rowOf(raw: {
     skillPoints: stats.skillPoints,
     chosenTree: stats.chosenTree,
     hotbar: stats.hotbar,
+    pots: stats.pots,
     quests: stats.quests,
     depot: stats.depot,
     blocked: stats.blocked,
@@ -103,6 +142,21 @@ function rowOf(raw: {
     bonusUntil: stats.bonusUntil,
     x: stats.x,
     z: stats.z,
+    stall: stats.stall,
+    stallSpot: stats.stallSpot,
+    steed: stats.steed ?? null,
+    mountItem: stats.mountItem,
+    riding: stats.riding,
+    greeted: stats.greeted,
+    mentored: stats.mentored,
+    fame: stats.fame,
+    kills: stats.kills,
+    mines: stats.mines,
+    fish: stats.fish,
+    damage: stats.damage,
+    bossKills: stats.bossKills,
+    duelWins: stats.duelWins,
+    goldEarned: stats.goldEarned,
     bag: asJson<CharacterSave["bag"]>(raw.bag, []),
     equipped: asJson<CharacterSave["equipped"]>(raw.equipped, {
       weapon: null,
@@ -195,7 +249,7 @@ export const createCharacter = createServerFn({ method: "POST" })
     const classId = asClassId(data.classId);
     const id = crypto.randomUUID();
     const invested = JSON.stringify({ str: 0, hp: 0, ats: 0, mvs: 0, ctp: 0 });
-    const bagSlots = Array.from({ length: 72 }, () => null as unknown);
+    const bagSlots = Array.from({ length: BAG_SIZE }, () => null as unknown);
     bagSlots[0] = {
       uid: `chest-${id.slice(0, 8)}`,
       id: "starter-chest",
@@ -278,6 +332,7 @@ export const saveCharacter = createServerFn({ method: "POST" })
           skillPoints: save.skillPoints ?? 0,
           chosenTree: save.chosenTree ?? null,
           hotbar: save.hotbar ?? [],
+          pots: save.pots ?? { hp: null, mp: null },
           quests: save.quests ?? [],
           depot: save.depot ?? [],
           blocked: save.blocked ?? [],
@@ -286,8 +341,23 @@ export const saveCharacter = createServerFn({ method: "POST" })
           bonusUntil: save.bonusUntil ?? 0,
           x: typeof save.x === "number" ? save.x : undefined,
           z: typeof save.z === "number" ? save.z : undefined,
+          stall: Array.isArray(save.stall) ? save.stall : null,
+          stallSpot: save.stallSpot && typeof save.stallSpot.x === "number" ? save.stallSpot : null,
+          steed: save.steed ?? null,
+          mountItem: save.mountItem ?? null,
+          riding: save.riding === true,
+          greeted: save.greeted === true,
+          mentored: save.mentored === true,
+          fame: Math.max(0, Math.floor(Number(save.fame) || 0)),
+          kills: Math.max(0, Math.floor(Number(save.kills) || 0)),
+          mines: Math.max(0, Math.floor(Number(save.mines) || 0)),
+          fish: Math.max(0, Math.floor(Number(save.fish) || 0)),
+          damage: Math.max(0, Math.floor(Number(save.damage) || 0)),
+          bossKills: Math.max(0, Math.floor(Number(save.bossKills) || 0)),
+          duelWins: Math.max(0, Math.floor(Number(save.duelWins) || 0)),
+          goldEarned: Math.max(0, Math.floor(Number(save.goldEarned) || 0)),
         }),
-        JSON.stringify(Array.isArray(save.bag) ? save.bag.slice(0, 72) : []),
+        JSON.stringify(Array.isArray(save.bag) ? save.bag.slice(0, BAG_SIZE) : []),
         JSON.stringify(save.equipped ?? {}),
         id,
         context.userId,
@@ -331,4 +401,32 @@ export const changeDeletePassword = createServerFn({ method: "POST" })
     const nextHash = await hashSecret(next);
     await sql`update account_secrets set delete_pass_hash = ${nextHash} where user_id = ${context.userId}`;
     return { ok: true as const };
+  });
+
+export type BoardRow = { name: string; level: number; kills: number; mines: number; fish: number; damage: number; fame: number; bossKills: number; duelWins: number; goldEarned: number };
+
+export const leaderboard = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async () => {
+    const sql = await getSql();
+    const rows = await sql<{ name: string; level: number; invested: unknown }>`
+      select name, level, invested from characters limit 300
+    `;
+    return rows.map((row) => {
+      const extra = asJson<Record<string, unknown>>(row.invested, {});
+      const num = (key: string) => (typeof extra[key] === "number" ? Math.max(0, Math.floor(extra[key] as number)) : 0);
+      const name = String(row.name || "Oyuncu").replace(/\s+/g, " ").slice(0, 16);
+      return {
+        name,
+        level: Math.max(1, Math.floor(Number(row.level) || 1)),
+        kills: num("kills"),
+        mines: num("mines"),
+        fish: num("fish"),
+        damage: num("damage"),
+        fame: num("fame"),
+        bossKills: num("bossKills"),
+        duelWins: num("duelWins"),
+        goldEarned: num("goldEarned"),
+      } satisfies BoardRow;
+    });
   });

@@ -1,12 +1,38 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useP2PRoom } from "@/lib/multiplayer";
 import { clearRemotes, parseBody, presence, retainRemotes, setLink, upsertRemote } from "@/game/online";
-import { bindChatSend, receiveChat } from "@/game/chat";
+import { bindChatSend, receiveChat, systemSay } from "@/game/chat";
 import { bindField, ingestField, setRoster } from "@/game/field";
 import { bindDuelSend, receivePacket } from "@/game/target";
+import { useRpg } from "@/game/rpg";
+import { signOut } from "@/lib/auth/client";
 
-export function NetLive({ nick }: { nick: string }) {
-  const p2p = useP2PRoom({ room: "abis-gece", name: (nick || "Gezgin").slice(0, 24) });
+const KICK_TEXT = "Hesabınıza başka bir bilgisayar veya tarayıcı tarafından giriş yapıldı çıkış yapılıyor.";
+
+function wireName(nick: string, account?: string) {
+  const shown = (nick || "Gezgin").replace(/\|/g, "").slice(0, 24);
+  if (!account || account === "dev-user") return shown.slice(0, 24);
+  const id = account.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 28);
+  if (!id) return shown.slice(0, 24);
+  return `u:${id}|${shown}`.slice(0, 64);
+}
+
+export function NetLive({ nick, account }: { nick: string; account?: string }) {
+  const name = wireName(nick, account);
+  const kicked = useRef(false);
+  const p2p = useP2PRoom({
+    room: "abis-gece",
+    name,
+    onKicked: () => {
+      if (kicked.current) return;
+      kicked.current = true;
+      systemSay(KICK_TEXT);
+      useRpg.setState({ toast: KICK_TEXT });
+      window.setTimeout(() => {
+        void signOut("/");
+      }, 1200);
+    },
+  });
 
   useEffect(() => {
     setLink(p2p.joined ? "live" : "wait", p2p.peers.length);

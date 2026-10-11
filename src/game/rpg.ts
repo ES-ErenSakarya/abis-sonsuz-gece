@@ -1,12 +1,13 @@
 // @ts-nocheck
 import { create } from "zustand";
 import { readSim, queueHop } from "@/game/input";
-import { REALMS, campSpawns, realmAt, realmGate, realmHerald } from "@/game/world";
+import { REALMS, FISHER_STAND, campSpawns, realmAt, realmGate, realmHerald } from "@/game/world";
 import { priceOf, studioGrave, studioSafe } from "@/game/studio";
 
 export const PAGE_SIZE = 24;
+export const BAG_PAGES = 4;
+export const BAG_SIZE = 96;
 export const SKILL_MAX = 32;
-export const BAG_SIZE = 72;
 
 export type ClassId = "savasci" | "okcu" | "buyucu" | "ninja";
 export type StatKey = "str" | "hp" | "ats" | "mvs" | "ctp" | "mag" | "mana";
@@ -74,6 +75,7 @@ export type CharacterSave = {
   skillPoints: number;
   chosenTree: string | null;
   hotbar: (string | null)[];
+  pots?: { hp: Item | null; mp: Item | null };
   quests: Quest[];
   depot: (Item | null)[];
   blocked: string[];
@@ -82,6 +84,21 @@ export type CharacterSave = {
   bonusUntil: number;
   x?: number;
   z?: number;
+  stall?: { uid: string; item: Item; price: number }[] | null;
+  stallSpot?: { x: number; z: number } | null;
+  steed?: { id: string; name: string; coat: string; mane: string; dark: string; muzzle?: string } | null;
+  mountItem?: Item | null;
+  riding?: boolean;
+  greeted?: boolean;
+  mentored?: boolean;
+  fame?: number;
+  kills?: number;
+  mines?: number;
+  fish?: number;
+  damage?: number;
+  bossKills?: number;
+  duelWins?: number;
+  goldEarned?: number;
 };
 
 export const SLOT_LABEL = {
@@ -548,12 +565,13 @@ export function asClassId(id) {
 }
 export function weaponStyleOf(id) {
 	if (!id) return "fist";
-	if (id === "kazma") return "kazma";
-	if (id === "olta") return "olta";
-	if (id.includes("bow")) return "bow";
-	if (id.includes("staff")) return "staff";
-	if (id.includes("dagger")) return "dagger";
-	if (id.includes("pala")) return "pala";
+	const key = String(id).toLocaleLowerCase("tr");
+	if (key === "kazma") return "kazma";
+	if (key === "olta") return "olta";
+	if (key.includes("bow") || key.includes("yay")) return "bow";
+	if (key.includes("staff") || key.includes("asa")) return "staff";
+	if (key.includes("dagger") || key.includes("hancer") || key.includes("hançer")) return "dagger";
+	if (key.includes("pala")) return "pala";
 	return "sword";
 }
 export function skillTier(rank) {
@@ -611,6 +629,10 @@ var skillReadyAt = {};
 export function skillCdLeft(id) {
 	return Math.max(0, ((skillReadyAt[id] ?? 0) - Date.now()) / 1e3);
 }
+export function skillCdTotal(id) {
+	const rank = useRpg.getState().skills[id] ?? 1;
+	return skillWait(id, Math.max(1, rank));
+}
 export function weaponFits(classId, itemId) {
 	const style = weaponStyleOf(itemId);
 	if (style === "fist" || style === "kazma" || style === "olta") return true;
@@ -623,7 +645,10 @@ export function itemFits(classId, it) {
 	if (!it || it.kind === "mat" || it.kind === "bag") return false;
 	if (it.id === "kazma" || it.id === "olta" || it.id === "hizli-pazar") return it.id !== "hizli-pazar";
 	if (it.forClass && it.forClass !== "hepsi" && it.forClass !== classId) return false;
-	if (it.slot === "weapon" && it.kind !== "tool") return weaponFits(classId, it.id);
+	if (it.slot === "weapon" && it.kind !== "tool") {
+		if (it.forClass && it.forClass !== "hepsi") return it.forClass === classId;
+		return weaponFits(classId, it.id);
+	}
 	return true;
 }
 export function classLine(slot, forClass) {
@@ -633,21 +658,31 @@ export function classLine(slot, forClass) {
 	return named[forClass] || "Bütün Karakterler Kuşanabilir";
 }
 export function openBagCount(stage) {
-	return 24 + Math.max(0, Math.min(4, stage)) * 12;
+	const n = Math.max(0, Math.min(4, Math.floor(Number(stage) || 0)));
+	return Math.min(BAG_SIZE, 24 + n * 18);
+}
+export function rankOf(score) {
+	const n = Math.max(0, Math.floor(Number(score) || 0));
+	if (n < 1000) return null;
+	if (n < 3000) return { name: "Acemi", color: "#f2d15a", glow: false };
+	if (n < 8000) return { name: "Deneyimli", color: "#e07a2f", glow: false };
+	if (n < 12000) return { name: "Usta", color: "#3cbf6a", glow: false };
+	if (n < 15000) return { name: "Ajan", color: "#e23b3b", glow: false };
+	return { name: "Abis Kahramanı", color: "#4aa3ff", glow: true };
 }
 export const ENHANCE = [
-	100,
-	250,
-	400,
-	550,
+	40,
+	70,
+	110,
+	160,
+	220,
+	300,
 	700,
-	850,
-	1e3,
-	1250,
-	1400,
+	1000,
+	1300,
 	1550
 ];
-export const PLUS_CHANCE = [90, 80, 70, 60, 50, 40, 30, 22, 15, 10];
+export const PLUS_CHANCE = [100, 100, 95, 90, 80, 70, 45, 30, 20, 12];
 export const STONE_BONUS = 35;
 export function upgradeChance(plus, stone) {
 	return Math.min(100, (PLUS_CHANCE[plus] ?? 10) + (stone ? STONE_BONUS : 0));
@@ -1029,7 +1064,7 @@ var SHOP = [
 		desc: "Ele alınır. İskelede balık tut. Balık vurunca çek.",
 		shop: "fisher",
 		kind: "tool",
-		req: 25
+		req: 1
 	},
 	{
 		id: "yem",
@@ -1058,7 +1093,8 @@ var SHOP = [
 		desc: "Ele alınır. Taş seç, Space ile 10 saniye kaz. 3 maden.",
 		shop: "miner",
 		kind: "tool",
-		req: 30
+		req: 8,
+		level: 8
 	},
 	{
 		id: "hizli-pazar",
@@ -1266,33 +1302,33 @@ function starterWeapon(classId) {
 		...base,
 		id: "starter-bow",
 		name: "Yay",
-		str: 7,
-		ats: 2,
-		desc: "Başlangıç yayı. Sol elde durur."
+		str: 3,
+		ats: 1,
+		desc: "Başlangıç yayı. Düşen yaylardan zayıftır."
 	};
 	if (id === "buyucu") return {
 		...base,
 		id: "starter-staff",
 		name: "Asa",
-		str: 6,
-		hp: 6,
-		desc: "Başlangıç asası."
+		str: 3,
+		hp: 3,
+		desc: "Başlangıç asası. Düşen asalardan zayıftır."
 	};
 	if (id === "ninja") return {
 		...base,
 		id: "starter-dagger",
 		name: "Hançer",
-		str: 7,
-		ats: 4,
-		ctp: 3,
-		desc: "Başlangıç hançeri."
+		str: 4,
+		ats: 2,
+		ctp: 1,
+		desc: "Başlangıç hançeri. Düşen hançerlerden zayıftır."
 	};
 	return {
 		...base,
 		id: "starter-sword",
 		name: "Kılıç",
-		str: 9,
-		desc: "Başlangıç kılıcı."
+		str: 4,
+		desc: "Başlangıç kılıcı. Düşen kılıçlardan zayıftır."
 	};
 }
 export const QUEST_BOARD = [
@@ -1300,30 +1336,30 @@ export const QUEST_BOARD = [
 	{ id: "q-rat", track: "ana", map: "koy", kind: "kill", mob: "rat", name: "Tarla Faresi", need: 12, min: 1, xp: 80, gold: 20, reward: "Başlangıç Zırhı" },
 	{ id: "q-demirci", track: "ana", map: "koy", kind: "talk", talk: "smith", name: "Demircinin Ocağı", need: 1, min: 2, xp: 50, gold: 15, reward: "" },
 	{ id: "q-hare", track: "ana", map: "koy", kind: "kill", mob: "hare", name: "Bozkır Tavşanı", need: 10, min: 3, xp: 90, gold: 24, reward: "" },
-	{ id: "q-yem", track: "ana", map: "koy", kind: "bring", mob: "yem", name: "Balıkçıya Yem", need: 3, min: 4, xp: 70, gold: 18, reward: "" },
-	{ id: "q-wolf", track: "ana", map: "koy", kind: "kill", mob: "wolf", name: "Gece Kurdu", need: 7, min: 5, xp: 120, gold: 36, reward: "Başlangıç Bileziği" },
-	{ id: "q-frog", track: "ana", map: "koy", kind: "kill", mob: "frog", name: "Bataklık Kurbağası", need: 9, min: 8, xp: 140, gold: 40, reward: "" },
-	{ id: "q-azman", track: "ana", map: "koy", kind: "kill", mob: "azman", name: "Tarla Azmanı", need: 1, min: 10, xp: 220, gold: 80, reward: "Başlangıç Küpesi" },
-	{ id: "q-reis", track: "ana", map: "koy", kind: "kill", mob: "reis", name: "Kurbağa Reisi", need: 1, min: 12, xp: 260, gold: 100, reward: "" },
-	{ id: "q-at", track: "ana", map: "koy2", kind: "kill", mob: "boar", name: "Yaban Domuzu", title: "Seyis'in Atı", need: 16, min: 15, xp: 640, gold: 240, reward: "At" },
-	{ id: "q-jackal", track: "av", map: "koy2", kind: "kill", mob: "jackal", name: "Çakal", need: 14, min: 10, xp: 180, gold: 55, reward: "" },
-	{ id: "q-boar", track: "av", map: "koy2", kind: "kill", mob: "boar", name: "Yaban Domuzu", need: 11, min: 14, xp: 220, gold: 70, reward: "" },
-	{ id: "q-spider", track: "av", map: "koy2", kind: "kill", mob: "spider", name: "Mağara Örümceği", need: 9, min: 18, xp: 260, gold: 85, reward: "" },
-	{ id: "q-scorp", track: "av", map: "koy2", kind: "kill", mob: "scorp", name: "Bozkır Akrebi", need: 8, min: 22, xp: 300, gold: 100, reward: "" },
-	{ id: "q-kral", track: "av", map: "koy2", kind: "kill", mob: "kral", name: "Domuz Kral", need: 1, min: 24, xp: 420, gold: 160, reward: "" },
-	{ id: "q-ana", track: "av", map: "koy2", kind: "kill", mob: "ana", name: "Akrep Ana", need: 1, min: 26, xp: 480, gold: 180, reward: "" },
-	{ id: "q-bear", track: "av", map: "dolunay", kind: "kill", mob: "bear", name: "Orman Ayısı", need: 12, min: 25, xp: 360, gold: 120, reward: "" },
-	{ id: "q-skel", track: "av", map: "dolunay", kind: "kill", mob: "skel", name: "İskelet Asker", need: 10, min: 29, xp: 420, gold: 140, reward: "" },
-	{ id: "q-snake", track: "av", map: "dolunay", kind: "kill", mob: "snake", name: "Bataklık Yılanı", need: 8, min: 33, xp: 480, gold: 160, reward: "" },
-	{ id: "q-goat", track: "av", map: "dolunay", kind: "kill", mob: "goat", name: "Dağ Tekesi", need: 7, min: 37, xp: 540, gold: 180, reward: "" },
-	{ id: "q-ayi", track: "av", map: "dolunay", kind: "kill", mob: "ayi", name: "Ayı Reisi", need: 1, min: 40, xp: 700, gold: 240, reward: "" },
-	{ id: "q-komutan", track: "av", map: "dolunay", kind: "kill", mob: "komutan", name: "İskelet Komutan", need: 1, min: 42, xp: 760, gold: 260, reward: "" },
-	{ id: "q-bandit", track: "av", map: "ay", kind: "kill", mob: "bandit", name: "Harabe Haydutu", need: 15, min: 40, xp: 620, gold: 210, reward: "" },
-	{ id: "q-golem", track: "av", map: "ay", kind: "kill", mob: "golem", name: "Taş Golem", need: 8, min: 44, xp: 700, gold: 240, reward: "" },
-	{ id: "q-bat", track: "av", map: "ay", kind: "kill", mob: "bat", name: "Gece Yarasa", need: 11, min: 48, xp: 780, gold: 270, reward: "" },
-	{ id: "q-wraith", track: "av", map: "ay", kind: "kill", mob: "wraith", name: "Buz Ruhu", need: 7, min: 52, xp: 860, gold: 300, reward: "" },
-	{ id: "q-muhafiz", track: "av", map: "ay", kind: "kill", mob: "muhafiz", name: "Golem Muhafız", need: 1, min: 54, xp: 980, gold: 360, reward: "" },
-	{ id: "q-lord", track: "av", map: "ay", kind: "kill", mob: "lord", name: "Ruh Lordu", need: 1, min: 56, xp: 1100, gold: 420, reward: "" },
+	{ id: "q-yem", track: "ana", map: "koy", kind: "fish", name: "Üç Balık", title: "Üç Balık", need: 3, min: 4, xp: 70, gold: 18, reward: "" },
+	{ id: "q-wolf", track: "ana", map: "koy", kind: "kill", mob: "wolf", name: "Gece Kurdu", need: 7, min: 6, xp: 120, gold: 36, reward: "Başlangıç Bileziği" },
+	{ id: "q-frog", track: "ana", map: "koy", kind: "kill", mob: "frog", name: "Bataklık Kurbağası", need: 9, min: 9, xp: 140, gold: 40, reward: "" },
+	{ id: "q-azman", track: "ana", map: "koy", kind: "kill", mob: "azman", name: "Tarla Azmanı", need: 1, min: 11, xp: 220, gold: 80, reward: "Başlangıç Küpesi" },
+	{ id: "q-reis", track: "ana", map: "koy", kind: "kill", mob: "reis", name: "Kurbağa Reisi", need: 1, min: 13, xp: 260, gold: 100, reward: "" },
+	{ id: "q-at", track: "ana", map: "koy2", kind: "kill", mob: "boar", name: "Yaban Domuzu", title: "Seyis'in Atı", need: 16, min: 15, xp: 640, gold: 240, reward: "At", talk: "stable" },
+	{ id: "q-jackal", track: "av", map: "koy2", kind: "kill", mob: "jackal", name: "Çakal", need: 14, min: 16, xp: 180, gold: 55, reward: "" },
+	{ id: "q-boar", track: "av", map: "koy2", kind: "kill", mob: "boar", name: "Yaban Domuzu", need: 11, min: 17, xp: 220, gold: 70, reward: "" },
+	{ id: "q-spider", track: "av", map: "koy2", kind: "kill", mob: "spider", name: "Mağara Örümceği", need: 9, min: 20, xp: 260, gold: 85, reward: "" },
+	{ id: "q-scorp", track: "av", map: "koy2", kind: "kill", mob: "scorp", name: "Bozkır Akrebi", need: 8, min: 24, xp: 300, gold: 100, reward: "" },
+	{ id: "q-kral", track: "av", map: "koy2", kind: "kill", mob: "kral", name: "Domuz Kral", need: 1, min: 26, xp: 420, gold: 160, reward: "" },
+	{ id: "q-ana", track: "av", map: "koy2", kind: "kill", mob: "ana", name: "Akrep Ana", need: 1, min: 28, xp: 480, gold: 180, reward: "" },
+	{ id: "q-bear", track: "av", map: "dolunay", kind: "kill", mob: "bear", name: "Orman Ayısı", need: 12, min: 29, xp: 360, gold: 120, reward: "" },
+	{ id: "q-skel", track: "av", map: "dolunay", kind: "kill", mob: "skel", name: "İskelet Asker", need: 10, min: 32, xp: 420, gold: 140, reward: "" },
+	{ id: "q-snake", track: "av", map: "dolunay", kind: "kill", mob: "snake", name: "Bataklık Yılanı", need: 8, min: 36, xp: 480, gold: 160, reward: "" },
+	{ id: "q-goat", track: "av", map: "dolunay", kind: "kill", mob: "goat", name: "Dağ Tekesi", need: 7, min: 40, xp: 540, gold: 180, reward: "" },
+	{ id: "q-ayi", track: "av", map: "dolunay", kind: "kill", mob: "ayi", name: "Ayı Reisi", need: 1, min: 42, xp: 700, gold: 240, reward: "" },
+	{ id: "q-komutan", track: "av", map: "dolunay", kind: "kill", mob: "komutan", name: "İskelet Komutan", need: 1, min: 44, xp: 760, gold: 260, reward: "" },
+	{ id: "q-bandit", track: "av", map: "ay", kind: "kill", mob: "bandit", name: "Harabe Haydutu", need: 15, min: 45, xp: 620, gold: 210, reward: "" },
+	{ id: "q-golem", track: "av", map: "ay", kind: "kill", mob: "golem", name: "Taş Golem", need: 8, min: 47, xp: 700, gold: 240, reward: "" },
+	{ id: "q-bat", track: "av", map: "ay", kind: "kill", mob: "bat", name: "Gece Yarasa", need: 11, min: 50, xp: 780, gold: 270, reward: "" },
+	{ id: "q-wraith", track: "av", map: "ay", kind: "kill", mob: "wraith", name: "Buz Ruhu", need: 7, min: 54, xp: 860, gold: 300, reward: "" },
+	{ id: "q-muhafiz", track: "av", map: "ay", kind: "kill", mob: "muhafiz", name: "Golem Muhafız", need: 1, min: 56, xp: 980, gold: 360, reward: "" },
+	{ id: "q-lord", track: "av", map: "ay", kind: "kill", mob: "lord", name: "Ruh Lordu", need: 1, min: 58, xp: 1100, gold: 420, reward: "" },
 	{ id: "y-fish", track: "yan", map: "koy", kind: "fish", name: "İlk Av", need: 3, min: 5, xp: 90, gold: 30, reward: "" },
 	{ id: "y-mine", track: "yan", map: "koy", kind: "mine", name: "İlk Damarı", need: 6, min: 8, xp: 110, gold: 40, reward: "" },
 	{ id: "y-sell", track: "yan", map: "koy", kind: "sell", name: "Fazlayı Sat", need: 1, min: 3, xp: 40, gold: 10, reward: "" },
@@ -1331,7 +1367,7 @@ export const QUEST_BOARD = [
 	{ id: "y-list", track: "yan", map: "koy", kind: "list", name: "Tezgaha Koy", need: 1, min: 6, xp: 70, gold: 15, reward: "" },
 	{ id: "y-sale", track: "yan", map: "koy", kind: "sale", name: "İlk Satış", need: 1, min: 6, xp: 120, gold: 25, reward: "" },
 	{ id: "y-plus6", track: "yan", map: "koy", kind: "plus6", name: "Artı Altı", need: 1, min: 10, xp: 160, gold: 40, reward: "" },
-	{ id: "y-plus10", track: "yan", map: "koy2", kind: "plus10", name: "Artı On", need: 1, min: 20, xp: 280, gold: 80, reward: "" },
+	{ id: "y-plus10", track: "yan", map: "koy2", kind: "plus10", name: "Artı On", need: 1, min: 70, xp: 280, gold: 80, reward: "" },
 	{ id: "y-enchant", track: "yan", map: "koy", kind: "enchant", name: "Beş Efsun", need: 5, min: 12, xp: 200, gold: 50, reward: "" },
 	{ id: "y-reroll", track: "yan", map: "koy", kind: "reroll", name: "Efsun Değiştir", need: 1, min: 12, xp: 90, gold: 20, reward: "" },
 	{ id: "y-craft", track: "yan", map: "koy", kind: "craft", name: "İlk İş", need: 1, min: 30, xp: 320, gold: 60, reward: "" },
@@ -1346,46 +1382,143 @@ export const BOSSES = [
 	{ id: "muhafiz", name: "Golem Muhafız", level: 56, realm: "ay", x: -470, z: 28, spec: "golem" },
 	{ id: "lord", name: "Ruh Lordu", level: 58, realm: "ay", x: -384, z: -36, spec: "wraith" },
 ];
+export function questGiver(row: { id?: string; kind?: string; talk?: string; map?: string } | undefined | null) {
+	if (!row) return null;
+	if (row.id === "q-at" || row.talk === "stable") return "stable";
+	if (row.id === "q-yem" || row.kind === "fish" || row.talk === "fisher") return "fisher";
+	if (row.id === "q-demirci" || row.talk === "smith") return "smith";
+	if (row.kind === "mine" || row.talk === "miner") return "miner";
+	if (row.kind === "sell" || row.kind === "stall" || row.kind === "list" || row.kind === "sale") return "market";
+	if (row.kind === "craft" || row.talk === "craft") return "craft";
+	if (row.kind === "plus6" || row.kind === "plus10" || row.kind === "enchant" || row.kind === "reroll") return "smith";
+	if (row.id === "q-merhaba" || row.talk === "guard") return "guard";
+	if (row.talk) return row.talk;
+	if (row.map && row.map !== "koy") return "herald";
+	return "guard";
+}
+const GIVER_NAME = {
+	guard: "Köy Muhafızı",
+	herald: "Görevli",
+	smith: "Demirci",
+	fisher: "Balıkçı",
+	miner: "Madenci",
+	market: "Satıcı",
+	stable: "Seyis",
+	craft: "Üretimci",
+};
+export function giverLabel(id) {
+	return GIVER_NAME[id] || "Görevli";
+}
+export function questBoardRow(quest) {
+	if (!quest) return null;
+	return QUEST_BOARD.find((row) => row.id === quest.id) || null;
+}
+export function questMatchesNpc(row, giver, mapId) {
+	if (!row || !giver || questGiver(row) !== giver) return false;
+	if (giver === "herald") return (row.map || "koy") === mapId;
+	if (giver === "guard") return !row.map || row.map === "koy";
+	return true;
+}
+export function nextStoryRow(quests) {
+	const list = quests || [];
+	const owned = new Set(list.map((quest) => quest.id));
+	const claimed = new Set(list.filter((quest) => quest.claimed).map((quest) => quest.id));
+	let last = -1;
+	QUEST_BOARD.forEach((row, index) => {
+		if (row.track !== "yan" && claimed.has(row.id)) last = index;
+	});
+	return QUEST_BOARD.find((row, index) => row.track !== "yan" && index > last && !owned.has(row.id)) || null;
+}
+function questFinished(quest) {
+	if (!quest || quest.claimed) return false;
+	return Boolean(quest.done) || (quest.need > 0 && quest.have >= quest.need);
+}
+export function questMapFor(giver, mentor) {
+	if (giver !== "herald") return "koy";
+	if (mentor && REALMS.some((row) => row.id === mentor)) return mentor;
+	const here = realmAt(readSim().x, readSim().z).id;
+	return here && here !== "koy" ? here : "koy2";
+}
+export function offerForNpc(quests, level, giver, mapId) {
+	if (!giver || (quests || []).some((quest) => !quest.claimed)) return null;
+	const owned = new Set((quests || []).map((quest) => quest.id));
+	const main = nextStoryRow(quests);
+	const side = () => QUEST_BOARD.find((row) => row.track === "yan" && !owned.has(row.id) && level >= row.min && questMatchesNpc(row, giver, mapId)) || null;
+	if (main) {
+		if (level >= main.min && questMatchesNpc(main, giver, mapId)) return main;
+		if (level < main.min) return side();
+		return null;
+	}
+	return side();
+}
+export function readyForNpc(quests, giver, mapId) {
+	return (quests || []).find((quest) => questFinished(quest) && questMatchesNpc(questBoardRow(quest), giver, mapId)) || null;
+}
+export function storyLockForNpc(quests, level, giver, mapId) {
+	if (!giver || (quests || []).some((quest) => !quest.claimed)) return null;
+	const story = nextStoryRow(quests);
+	if (!story || level >= story.min || !questMatchesNpc(story, giver, mapId)) return null;
+	return story;
+}
+export function activeForNpc(quests, giver, mapId) {
+	return (quests || []).find((quest) => !quest.claimed && questMatchesNpc(questBoardRow(quest), giver, mapId)) || null;
+}
+function giverSpot(giver, mapId, label) {
+	const spot = (x, z, role) => ({ x, z, label, kind: "npc", role });
+	if (giver === "smith") return spot(-15.05, 18.35, "smith");
+	if (giver === "market") return spot(-12.95, 19.85, "market");
+	if (giver === "stable") return spot(16.6, 16.4, "stable");
+	if (giver === "fisher") return spot(FISHER_STAND.x, FISHER_STAND.z, "fisher");
+	if (giver === "miner") return spot(70, 10, "miner");
+	if (giver === "craft") return spot(-18, 8, "craft");
+	if (giver === "guard") return spot(2.2, 2.5, "guard");
+	const herald = realmHerald(mapId || "koy2");
+	return { x: herald.x, z: herald.z, label, kind: "npc", role: "herald" };
+}
 export function questGuide(px, pz) {
-	const open = useRpg.getState().quests.filter((quest) => !quest.claimed);
-	if (!open.length) return null;
+	const state = useRpg.getState();
 	const here = realmAt(px, pz);
 	const boardOf = (quest) => QUEST_BOARD.find((row) => row.id === quest.id);
-	const unfinished = open.filter((quest) => !quest.done);
-	const local = unfinished.find((quest) => (boardOf(quest)?.map || quest.map) === here.id);
-	const quest = local || unfinished[0] || open[0];
-	const board = boardOf(quest);
-	const mapId = board?.map || quest.map || "koy";
-	const dest = REALMS.find((row) => row.id === mapId) || REALMS[0];
-	const kind = board?.kind || quest.kind || "kill";
+	const open = state.quests.filter((quest) => !quest.claimed);
+	let quest = null;
+	let row = null;
+	if (open.length) {
+		const unfinished = open.filter((item) => !item.done && !(item.need > 0 && item.have >= item.need));
+		const local = unfinished.find((item) => (boardOf(item)?.map || item.map) === here.id);
+		quest = local || unfinished[0] || open.find((item) => item.done || (item.need > 0 && item.have >= item.need)) || open[0];
+		row = boardOf(quest);
+	} else {
+		const story = nextStoryRow(state.quests);
+		const side = QUEST_BOARD.find((item) => item.track === "yan" && !state.quests.some((quest) => quest.id === item.id) && state.level >= item.min);
+		if (story && state.level >= story.min) row = story;
+		else row = side || story;
+	}
+	if (!row && !quest) return null;
+	const giver = questGiver(row);
+	const kind = row?.kind || quest?.kind || "kill";
+	const done = Boolean(quest && (quest.done || (quest.need > 0 && quest.have >= quest.need)));
+	const atNpc = !quest || done || kind === "talk" || kind === "bring" || kind === "sell" || kind === "stall" || kind === "list" || kind === "sale" || kind === "plus6" || kind === "plus10" || kind === "enchant" || kind === "reroll" || kind === "craft";
+	const home = giver === "herald" ? (row?.map || quest?.map || "koy2") : "koy";
+	const hunt = row?.map || quest?.map || "koy";
+	const mapId = atNpc ? home : hunt;
 	if (here.id !== mapId) {
+		const dest = REALMS.find((item) => item.id === mapId) || REALMS[0];
 		const gate = realmGate(here.id);
-		return { x: gate.x, z: gate.z, label: `Işınlayıcı · ${dest.name}`, kind: "gate" };
+		return { x: gate.x, z: gate.z, label: `Işınlayıcı · ${dest.name}`, kind: "gate", role: "gate" };
 	}
-	if (quest.done || kind === "talk" || kind === "bring") {
-		const talk = board?.talk || quest.talk;
-		if (!quest.done && talk === "smith") return { x: -15.05, z: 18.35, label: board?.name || "Demirci", kind: "npc" };
-		if (!quest.done && talk === "market") return { x: -12.95, z: 19.85, label: board?.name || "Satıcı", kind: "npc" };
-		const herald = realmHerald(mapId);
-		return { x: herald.x, z: herald.z, label: quest.done ? "Görevliye dön" : (board?.name || "Görevli"), kind: "herald" };
-	}
-	if (kind === "fish") return { x: dest.x + (mapId === "koy" ? 33 : 2), z: dest.z + (mapId === "koy" ? 56 : 2), label: "Balık tut", kind: "npc" };
-	if (kind === "stall" || kind === "list" || kind === "sale" || kind === "sell") return { x: -12.95, z: 19.85, label: board?.name || "Pazar", kind: "npc" };
+	const label = done ? `${giverLabel(giver)} · teslim` : (row?.name || "Görev");
+	if (atNpc) return giverSpot(giver, mapId, label);
+	if (kind === "fish") return giverSpot("fisher", mapId, "Balık tut");
 	if (kind === "mine") return { x: 96, z: 40, label: "Maden", kind: "mob" };
-	if (kind === "plus6" || kind === "plus10" || kind === "enchant" || kind === "reroll" || kind === "craft") {
-		return { x: mapId === "koy" ? -15.05 : dest.x - 2.2, z: mapId === "koy" ? 18.35 : dest.z + 2.2, label: board?.name || "Zanaat", kind: "npc" };
-	}
 	const points = [];
+	const mob = quest?.mob || row?.mob;
 	for (const spot of campSpawns()) {
-		if (spot.realm === mapId && spot.specId === quest.mob) points.push(spot);
+		if (spot.realm === mapId && spot.specId === mob) points.push(spot);
 	}
 	for (const boss of BOSSES) {
-		if (boss.realm === mapId && boss.id === quest.mob) points.push(boss);
+		if (boss.realm === mapId && boss.id === mob) points.push(boss);
 	}
-	if (!points.length) {
-		const herald = realmHerald(mapId);
-		return { x: herald.x, z: herald.z, label: board?.name || "Görev", kind: "herald" };
-	}
+	if (!points.length) return giverSpot(giver, mapId, label);
 	let best = points[0];
 	let bestD = Infinity;
 	for (const spot of points) {
@@ -1395,7 +1528,7 @@ export function questGuide(px, pz) {
 			best = spot;
 		}
 	}
-	return { x: best.x, z: best.z, label: board?.name || "Hedef", kind: "mob" };
+	return { x: best.x, z: best.z, label: BOSSES.some((boss) => boss.x === best.x && boss.z === best.z) ? `${BOSSES.find((boss) => boss.x === best.x && boss.z === best.z)?.name || "Boss"} zindan kapısı` : (row?.name || "Hedef"), kind: "mob" };
 }
 export const GATE_COST = { koy: 100, koy2: 500, dolunay: 1500, ay: 4000 };
 const SLOT_STONES = {
@@ -1490,24 +1623,50 @@ function gearDrop(level) {
 		{ slot: "gloves", name: "Avcı Eldiveni", id: "glove-av", forClass: "hepsi" }
 	];
 	const pick = slots[Math.floor(Math.random() * slots.length)];
-	const power = 4 + Math.floor(level / 4);
+	const power = 12 + Math.floor(level * 1.35);
 	return {
 		uid: uid(),
 		id: pick.id,
 		name: pick.name,
 		slot: pick.slot,
 		level,
-		plus: 0,
-		str: pick.slot === "weapon" ? 6 + power : 1,
-		hp: pick.slot === "armor" || pick.slot === "helmet" ? 8 + power * 2 : 2,
-		ats: 0,
-		mvs: pick.slot === "boots" ? 3 : 0,
-		ctp: 0,
+		plus: rollDropPlus(),
+		str: pick.slot === "weapon" ? 14 + power : 4 + Math.floor(level / 4),
+		hp: pick.slot === "armor" || pick.slot === "helmet" ? 28 + power * 2 : 8 + Math.floor(level / 3),
+		ats: pick.slot === "weapon" ? 2 + Math.floor(level / 12) : 0,
+		mvs: pick.slot === "boots" ? 4 + Math.floor(level / 15) : 0,
+		ctp: pick.slot === "gloves" || pick.slot === "ring" ? 1 + Math.floor(level / 20) : 0,
 		desc: classLine(pick.slot, pick.forClass),
 		kind: "gear",
 		forClass: pick.forClass,
-		enchants: []
+		enchants: rollDropEnchants(pick.slot)
 	};
+}
+function rollDropPlus() {
+	const roll = Math.random();
+	if (roll < 0.07) return 3;
+	if (roll < 0.2) return 2;
+	if (roll < 0.45) return 1;
+	return 0;
+}
+function rollEnchantCount() {
+	const roll = Math.random();
+	if (roll < 0.01) return 5;
+	if (roll < 0.03) return 4;
+	if (roll < 0.06) return 3;
+	if (roll < 0.1) return 2;
+	if (roll < 0.15) return 1;
+	return 0;
+}
+function rollDropEnchants(slot) {
+	const count = rollEnchantCount();
+	const list = [];
+	for (let n = 0; n < count; n++) {
+		const row = rollEnchant(slot, list);
+		if (!row) break;
+		list.push(row);
+	}
+	return list;
 }
 function matDrop(level) {
 	const slots = ["weapon", "armor", "helmet", "belt", "boots", "gloves", "ring", "necklace", "earring", "bracelet"];
@@ -1518,7 +1677,7 @@ function matDrop(level) {
 		uid: uid(),
 		id: row.id,
 		name: row.name,
-		slot: "ring",
+		slot: "belt",
 		level: 1,
 		plus: 0,
 		str: 0,
@@ -1526,23 +1685,160 @@ function matDrop(level) {
 		ats: 0,
 		mvs: 0,
 		ctp: 0,
-		desc: "Yükseltme taşı. Yalnızca aynı parçaya basılır.",
+		desc: `${row.name}. Yükseltme taşı, kuşanılmaz.`,
 		kind: "mat",
 		count: 1
 	};
 }
+function catalogItem(id) {
+	const row = CATALOG.find((item) => item.id === id);
+	if (!row) return null;
+	return {
+		...row,
+		uid: uid(),
+		level: row.level || 1,
+		plus: 0,
+		count: 1,
+		enchants: []
+	};
+}
+function matFits(it, gear) {
+	if (!it || it.kind !== "mat" || it.id === "guc-tasi") return false;
+	const plus = gear?.plus ?? 0;
+	if (plus < 6) return true;
+	return it.id === matForPlus(plus, gear.slot).id;
+}
+function attachSmith(bag, item, stone, mat) {
+	let nextStone = stone;
+	let nextMat = mat;
+	if (item && !nextStone) {
+		const i = bag.findIndex((it) => it && it.id === "guc-tasi" && (it.count ?? 1) > 0);
+		if (i >= 0) {
+			const it = bag[i];
+			const left = (it.count ?? 1) - 1;
+			bag[i] = left > 0 ? { ...it, count: left } : null;
+			nextStone = { ...it, count: 1, uid: uid() };
+		}
+	}
+	if (item && !nextMat) {
+		const plus = item.plus ?? 0;
+		const need = matForPlus(plus, item.slot);
+		const i = bag.findIndex((it) => matFits(it, item) && (plus < 6 || it.id === need.id));
+		if (i >= 0) {
+			const it = bag[i];
+			const left = (it.count ?? 1) - 1;
+			bag[i] = left > 0 ? { ...it, count: left } : null;
+			nextMat = { ...it, count: 1, uid: uid() };
+		}
+	}
+	return { smithStone: nextStone, smithMat: nextMat };
+}
 export function rollKillLoot(level, boss): Item[] {
 	const out = [];
-	if (Math.random() < (boss ? 0.16 : 0.045)) out.push(gearDrop(level));
-	if (Math.random() < (boss ? 0.22 : 0.04)) out.push(matDrop(level));
+	if (Math.random() < (boss ? 0.28 : 0.07)) out.push(gearDrop(level));
+	if (Math.random() < (boss ? 0.72 : 0.38)) out.push(matDrop(level));
+	if (boss && Math.random() < 0.4) out.push(matDrop(level));
+	if (Math.random() < (boss ? 0.16 : 0.045)) {
+		const pot = catalogItem("pot-hp");
+		if (pot) out.push(pot);
+	}
+	if (Math.random() < (boss ? 0.16 : 0.045)) {
+		const pot = catalogItem("pot-mp");
+		if (pot) out.push(pot);
+	}
+	if (Math.random() < (boss ? 0.2 : 0.07)) {
+		const stone = catalogItem("guc-tasi");
+		if (stone) out.push(stone);
+	}
 	return out;
 }
 export function dropTable(level) {
 	return [
 		`Sv.${level} silah, zırh, miğfer veya kemer`,
 		"Bot, eldiven ve takı",
-		"Parçaya özel yükseltme taşı (seyrek)"
+		"Parçaya özel yükseltme taşı (seyrek)",
+		"+0 ile +3 ve seyrek efsun"
 	];
+}
+export function saleGold(it) {
+	if (!it) return 0;
+	const base = it.price || 24 + (it.level || 1) * 9 + (it.str || 0) * 4 + (it.hp || 0) * 1.2;
+	const plus = 1 + (it.plus || 0) * 0.4;
+	return Math.max(4, Math.round(base * 0.7 * plus)) * (it.count ?? 1);
+}
+export function tryReceiveItem(item) {
+	if (!item) return false;
+	const s = useRpg.getState();
+	const bag = s.bag.slice();
+	const limit = openBagCount(s.bagStage);
+	const stackable = item.kind === "mat" || item.kind === "potion" || item.kind === "fish" || item.id === "yem" || item.id === "guc-tasi";
+	if (stackable) {
+		const stack = bag.findIndex((slot, i) => i < limit && slot?.id === item.id && (slot.count ?? 1) < 200);
+		if (stack >= 0) {
+			const have = bag[stack].count ?? 1;
+			const add = item.count ?? 1;
+			if (have + add <= 200) {
+				bag[stack] = { ...bag[stack], count: have + add };
+				useRpg.setState({ bag, toast: `${item.name} alındı` });
+				return true;
+			}
+		}
+	}
+	const hole = bag.findIndex((slot, i) => i < limit && slot == null);
+	if (hole < 0) {
+		useRpg.setState({ toast: "Envanterinde yer yok" });
+		return false;
+	}
+	bag[hole] = item;
+	useRpg.setState({ bag, toast: `${item.name} alındı` });
+	return true;
+}
+export function bagRoom(item?: { id?: string; kind?: string; count?: number } | null) {
+	const s = useRpg.getState();
+	const limit = openBagCount(s.bagStage);
+	const count = item?.count ?? 1;
+	const stackable = item && (item.kind === "mat" || item.kind === "potion" || item.kind === "fish" || item.id === "yem" || item.id === "guc-tasi");
+	if (stackable && item?.id) {
+		const stack = s.bag.findIndex((slot, i) => i < limit && slot?.id === item.id && (slot.count ?? 1) + count <= 200);
+		if (stack >= 0) return true;
+	}
+	return s.bag.some((slot, i) => i < limit && slot == null);
+}
+const HORSE_COATS = [
+	{ id: "doru", name: "Doru", coat: "#6a3b22", mane: "#1a120e", dark: "#241810", muzzle: "#8a5340" },
+	{ id: "siyah", name: "Siyah", coat: "#1c1916", mane: "#0a0908", dark: "#0e0c0a", muzzle: "#3a3028" },
+	{ id: "al", name: "Al", coat: "#8a3a22", mane: "#2a140e", dark: "#3a1c14", muzzle: "#c4846a" },
+	{ id: "kir", name: "Kır", coat: "#c8c2b6", mane: "#4e4a44", dark: "#6a6560", muzzle: "#ddd6ca" },
+	{ id: "izabel", name: "İzabel", coat: "#c4a05a", mane: "#f4f0e6", dark: "#8a6840", muzzle: "#e6d2a8" },
+	{ id: "yagiz", name: "Yağız", coat: "#3a2418", mane: "#120e0c", dark: "#1a100c", muzzle: "#6a4030" },
+	{ id: "demirkir", name: "Demirkır", coat: "#6e7378", mane: "#1a1c1e", dark: "#3a3e42", muzzle: "#9aa0a4" }
+];
+function horseCoat(id) {
+	return HORSE_COATS.find((row) => row.id === id) || HORSE_COATS[0];
+}
+function horseItem(coat) {
+	const look = coat || HORSE_COATS[0];
+	return {
+		uid: uid(),
+		id: "binek-at",
+		name: `${look.name} At`,
+		slot: "belt",
+		level: 1,
+		plus: 0,
+		str: 0,
+		hp: 0,
+		ats: 0,
+		mvs: 8,
+		ctp: 0,
+		desc: "At yuvasına takılır. H ile binilir, inince yuvada kalır.",
+		kind: "mount",
+		req: 1,
+		forClass: "hepsi",
+		coatId: look.id
+	};
+}
+function ownsHorse(s) {
+	return Boolean(s.steed) || Boolean(s.mountItem) || s.bag?.some((item) => item?.kind === "mount" || item?.id === "binek-at") || s.quests?.some((quest) => quest.id === "q-at" && quest.claimed);
 }
 function enchantMods(s) {
 	const out = { hp: 0, mana: 0, ats: 0, ctp: 0, mvs: 0, def: 0, str: 0, mob: 0, bosses: {} };
@@ -1558,9 +1854,30 @@ function enchantMods(s) {
 export function enchantView(s): { hp: number; mana: number; ats: number; ctp: number; mvs: number; def: number; str: number; mob: number; bosses: Record<string, number> } {
 	return enchantMods(s);
 }
+function questBrief(row) {
+	if (!row) return "";
+	const map = REALMS.find((item) => item.id === row.map)?.name || "Ana Köy";
+	const who = giverLabel(questGiver(row));
+	const boss = BOSSES.find((item) => item.id === row.mob);
+	if (row.kind === "kill" && boss) return `${map} haritasında yerdeki mavi halkadan geç. Havada duran yuvarlak zeminde 5 dalga var: ilk üç dalga 3 yaratık, 4. dalga 4 yaratık, 5. dalgada yalnız ${boss.name}. Her dalga bir öncekinden güçlüdür ve üstüne koşar. Boss düşünce kapının önüne dönersin. Sonra ${who} teslim alır.`;
+	if (row.kind === "kill") return `${map} bölgesinde ${row.need} ${row.name} kes. Sarı ok sürüyü gösterir. Bitince ${who} teslim alır.`;
+	if (row.kind === "talk") return `${who} ile konuş. Sarı ok onu gösterir. Konuşunca görev ilerler.`;
+	if (row.kind === "fish") return `Balıkçıdan olta ve yem al. Oltayı kuşan, iskelede Space ile at. İğne yeşil çizgideyken tekrar Space. ${row.need} balık tut. ${who} teslim alır.`;
+	if (row.kind === "mine") return `Madenciden kazmayı al. Seviye 8 yeter. Damarın üstüne gel, kazmayı kuşan, Space ile kaz. ${row.need} maden çıkar. ${who} teslim alır.`;
+	if (row.kind === "sell") return `Fazla eşyayı Satıcı penceresine sürükleyip sat. Bir satış yeter. ${who} teslim alır.`;
+	if (row.kind === "stall") return `Satıcıdan Pazar al ve kullan. Tezgah açılınca görev ilerler. ${who} teslim alır.`;
+	if (row.kind === "list") return `Kendi tezgahında boş yuvaya eşya sürükle, fiyatı yaz, Tamam de. ${who} teslim alır.`;
+	if (row.kind === "sale") return `Başka bir oyuncunun tezgahından bir eşya alınca biter. Sağ tık, evet de. ${who} teslim alır.`;
+	if (row.kind === "plus6") return `Demirciye eşyayı sürükle. Güç taşı ve yükseltme taşı çantadan kendisi gelir. Aynı eşyayı +6 yap. ${who} teslim alır.`;
+	if (row.kind === "plus10") return `Seviye 70 şart. Demircide aynı eşyayı +10 yap. +7 sonrası taşın adı parçayla aynı olmalı. ${who} teslim alır.`;
+	if (row.kind === "enchant") return `Satıcıdan Mistik Efsun al. Eşyanın üstüne sürükle. 5 efsun dolunca biter. ${who} teslim alır.`;
+	if (row.kind === "reroll") return `Mistik Değiştiriciyi efsunlu eşyanın üstüne sürükle. Efsunlar yenilenir. ${who} teslim alır.`;
+	if (row.kind === "craft") return `Üretimcide tarif seç. İstenen madenler çantanda olsun, üret. ${who} teslim alır.`;
+	return `${row.name}. Bitince ${who} teslim alır. Haritadaki sarı ok yolu gösterir.`;
+}
 function questFromBoard(row) {
 	const kind = row.kind || "kill";
-	const detail = row.reward === "At" ? `${row.need} ${row.name} öldür. Ödül: at.` : kind === "talk" ? `${row.name} ile konuş.` : kind === "bring" ? `${row.need} ${row.name} götür.` : kind === "kill" ? `${row.need} ${row.name} öldür. Sv.${row.min}` : `${row.name}. Sv.${row.min}`;
+	const detail = questBrief(row);
 	const title = row.title || row.name;
 	return {
 		id: row.id,
@@ -1585,24 +1902,21 @@ function questFromBoard(row) {
 function ensureQuest(get, set) {
 	const s = get();
 	const owned = new Set(s.quests.map((quest) => quest.id));
-	if (s.level >= 15 && !owned.has("q-at")) {
-		const row = QUEST_BOARD.find((item) => item.id === "q-at");
-		if (row) {
-			set({
-				quests: [...s.quests, questFromBoard(row)],
-				toast: "Görev: Seyis'in Atı",
-			});
-			return;
-		}
-	}
 	if (s.quests.some((quest) => !quest.claimed)) return;
 	const main = QUEST_BOARD.find((row) => row.track !== "yan" && !owned.has(row.id) && s.level >= row.min);
 	const side = QUEST_BOARD.find((row) => row.track === "yan" && !owned.has(row.id) && s.level >= row.min);
 	const next = main || side;
-	if (!next) return;
+	if (!next || questGiver(next)) return;
+	const bag = s.bag.slice();
+	let toast = s.toast || `Görev: ${next.name}`;
+	if (questGiver(next) === "fisher") {
+		for (let n = 0; n < 8; n++) pushMat(bag, s.bagStage, { id: "yem", name: "Yem", desc: "Yemsiz olta suya inmez." });
+		toast = "Balıkçı 8 yem verdi";
+	}
 	set({
 		quests: [...s.quests, questFromBoard(next)],
-		toast: s.toast || `Görev: ${next.name}`
+		bag,
+		toast
 	});
 }
 function blankHotbar() {
@@ -1621,13 +1935,25 @@ function withSkillQuest(_level, chosenTree, quests) {
 	} : quest);
 }
 function normalizeQuests(list) {
-	return list.map((quest) => ({
-		...quest,
-		seen: quest.seen ?? [],
-		claimed: quest.claimed ?? Boolean(quest.done),
-		minLevel: quest.minLevel ?? 1,
-		have: quest.have ?? 0
-	}));
+	return list.map((quest) => {
+		const row = QUEST_BOARD.find((item) => item.id === quest.id);
+		const need = quest.need || row?.need || 1;
+		const have = quest.have ?? 0;
+		return {
+			...quest,
+			kind: quest.kind || row?.kind || "kill",
+			mob: quest.mob || row?.mob,
+			talk: quest.talk || row?.talk,
+			map: quest.map || row?.map,
+			need,
+			have,
+			detail: row ? questBrief(row) : quest.detail,
+			done: Boolean(quest.done) || have >= need,
+			seen: quest.seen ?? [],
+			claimed: quest.claimed === true,
+			minLevel: row?.min ?? quest.minLevel ?? 1
+		};
+	});
 }
 function parkedBag(s) {
 	const bag = s.bag.slice();
@@ -1672,6 +1998,7 @@ export function captureSave() {
 		skillPoints: s.skillPoints,
 		chosenTree: s.chosenTree,
 		hotbar: s.hotbar,
+		pots: s.pots,
 		quests: s.quests,
 		depot: s.depot,
 		blocked: s.blocked,
@@ -1679,8 +2006,20 @@ export function captureSave() {
 		wellAt: s.wellAt,
 		bonusUntil: s.bonusUntil,
 		stall: s.stall,
+		stallSpot: s.stallSpot,
 		steed: s.steed,
+		mountItem: s.mountItem,
 		riding: s.riding,
+		greeted: s.greeted,
+		mentored: s.mentored,
+		fame: s.fame,
+		kills: s.kills,
+		mines: s.mines,
+		fish: s.fish,
+		damage: s.damage,
+		bossKills: s.bossKills,
+		duelWins: s.duelWins,
+		goldEarned: s.goldEarned,
 		x: here.x,
 		z: here.z
 	};
@@ -1705,10 +2044,21 @@ var guardCut = 0;
 var stepUntil = 0;
 var stepMul = 1;
 var regenUntil = 0;
+var reviveBoostUntil = 0;
 export function takeCast() {
 	const next = pendingCast;
 	pendingCast = null;
 	return next;
+}
+export function commitSkill(id) {
+	const rank = useRpg.getState().skills[id] ?? 1;
+	skillReadyAt[id] = Date.now() + skillWait(id, rank) * 1e3;
+}
+export function refundSkill(cost) {
+	const s = useRpg.getState();
+	const mana = Math.min(s.manaMax, s.mana + cost);
+	liveMana = mana;
+	useRpg.setState({ mana });
 }
 function payQuest(get, title, xp, gold) {
 	get().grantXp(xp);
@@ -1720,15 +2070,25 @@ function bumpQuest(get, set, kind, mobId) {
 	let changed = false;
 	let doneTitle = "";
 	const quests = s.quests.map((quest) => {
-		if (quest.claimed || quest.done || quest.kind !== kind) return quest;
-		if (kind === "kill" && quest.mob !== mobId) return quest;
-		if (kind === "talk" && quest.talk !== mobId) return quest;
+		const row = QUEST_BOARD.find((item) => item.id === quest.id);
+		const kindOf = quest.kind || row?.kind || "";
+		const mob = quest.mob || row?.mob;
+		const talk = quest.talk || row?.talk;
+		if (quest.claimed || quest.done || (quest.need > 0 && quest.have >= quest.need) || kindOf !== kind) return quest;
+		if (kind === "kill" && mob !== mobId) return quest;
+		if (kind === "talk" && talk !== mobId) return quest;
 		changed = true;
 		const have = quest.have + 1;
 		const done = have >= quest.need;
-		if (done) doneTitle = quest.title;
+		if (done) {
+			const who = giverLabel(questGiver(QUEST_BOARD.find((row) => row.id === quest.id)));
+			doneTitle = `${quest.title} hazır. ${who} teslim alır.`;
+		}
 		return {
 			...quest,
+			kind: kindOf,
+			mob,
+			talk,
 			have,
 			done
 		};
@@ -1736,7 +2096,7 @@ function bumpQuest(get, set, kind, mobId) {
 	if (!changed) return;
 	set({
 		quests,
-		toast: doneTitle ? `${doneTitle} hazır. Görevliye dön.` : s.toast
+		toast: doneTitle || s.toast
 	});
 }
 function resetLiveVitals() {
@@ -1815,7 +2175,7 @@ export function sumStats(s) {
 	return totalsOf(s);
 }
 function emptyBag() {
-	return Array.from({ length: 72 }, () => null);
+	return Array.from({ length: BAG_SIZE }, () => null);
 }
 function withStarterChest(bag, classId, equipped) {
 	if (Boolean(equipped.weapon) || bag.some((it) => it && (it.id === "starter-chest" || it.slot === "weapon"))) return bag;
@@ -1836,10 +2196,20 @@ export function applySave(save) {
 	resetLiveVitals();
 	const s = useRpg.getState();
 	const classId = asClassId(save.classId);
-	const bag = withStarterChest(Array.from({ length: 72 }, (_, i) => save.bag[i] ?? null), classId, {
+	const bag = withStarterChest(Array.from({ length: BAG_SIZE }, (_, i) => save.bag[i] ?? null), classId, {
 		...blankEquip(),
 		...save.equipped
-	});
+	}).map((item) => item?.id === "kazma" ? { ...item, level: 8, req: 8 } : item);
+	const equipped = {
+		...blankEquip(),
+		...save.equipped
+	};
+	for (const key of Object.keys(equipped)) {
+		if (equipped[key]?.id === "kazma") equipped[key] = { ...equipped[key], level: 8, req: 8 };
+	}
+	const skills = { ...save.skills ?? {} };
+	let quests = normalizeQuests(Array.isArray(save.quests) ? save.quests : []).filter((quest) => !String(quest.id).startsWith("q-lv-"));
+	if ((save.level ?? 1) < 70) quests = quests.filter((quest) => quest.id !== "y-plus10" || quest.claimed);
 	const next = {
 		...s,
 		classId,
@@ -1856,23 +2226,36 @@ export function applySave(save) {
 			...save.invested
 		},
 		bag,
-		equipped: {
-			...s.equipped,
-			...save.equipped
-		},
-		skills: { ...save.skills ?? {} },
+		equipped,
+		skills,
 		skillPoints: save.skillPoints ?? 0,
-		chosenTree: save.chosenTree ?? inferTree(classId, save.skills ?? {}),
+		chosenTree: save.chosenTree ?? inferTree(classId, skills),
 		hotbar: Array.from({ length: 8 }, (_, i) => save.hotbar?.[i] ?? null),
-		quests: normalizeQuests(Array.isArray(save.quests) ? save.quests : []).filter((quest) => !String(quest.id).startsWith("q-lv-")),
+		pots: {
+			hp: save.pots?.hp ?? null,
+			mp: save.pots?.mp ?? null
+		},
+		quests,
 		depot: Array.from({ length: 24 }, (_, i) => save.depot?.[i] ?? null),
 		blocked: Array.isArray(save.blocked) ? save.blocked : [],
 		bagStage: save.bagStage ?? 0,
 		wellAt: save.wellAt ?? 0,
 		bonusUntil: save.bonusUntil ?? 0,
 		stall: Array.isArray(save.stall) ? save.stall : null,
+		stallSpot: save.stallSpot && typeof save.stallSpot.x === "number" && typeof save.stallSpot.z === "number" ? { x: save.stallSpot.x, z: save.stallSpot.z } : null,
 		steed: save.steed ?? null,
-		riding: Boolean(save.riding) && Boolean(save.steed),
+		mountItem: save.mountItem ?? null,
+		riding: Boolean(save.riding) && Boolean(save.steed || save.mountItem),
+		greeted: save.greeted === true || (save.greeted == null && ((save.level ?? 1) > 1 || (save.xp ?? 0) > 0 || (Array.isArray(save.quests) && save.quests.length > 0))),
+		mentored: save.mentored === true || Object.values(skills).some((rank) => Number(rank) > 0),
+		fame: Math.max(0, Math.floor(Number(save.fame) || 0)),
+		kills: Math.max(0, Math.floor(Number(save.kills) || 0)),
+		mines: Math.max(0, Math.floor(Number(save.mines) || 0)),
+		fish: Math.max(0, Math.floor(Number(save.fish) || 0)),
+		damage: Math.max(0, Math.floor(Number(save.damage) || 0)),
+		bossKills: Math.max(0, Math.floor(Number(save.bossKills) || 0)),
+		duelWins: Math.max(0, Math.floor(Number(save.duelWins) || 0)),
+		goldEarned: Math.max(0, Math.floor(Number(save.goldEarned) || 0)),
 		down: null,
 		mapLoad: "",
 		gearRev: s.gearRev + 1,
@@ -1886,6 +2269,15 @@ export function applySave(save) {
 	applyVitals(next, false);
 	next.hp = Math.min(next.hp, next.hpMax);
 	if (next.level <= 1 && next.xp === 0 && next.gold === 400) next.gold = 0;
+	const earnedHorse = next.quests.some((quest) => quest.id === "q-at" && quest.claimed);
+	if (earnedHorse && !next.steed) next.steed = horseCoat(next.mountItem?.coatId);
+	if (earnedHorse && !next.mountItem && !next.bag.some((item) => item?.id === "binek-at" || item?.kind === "mount")) {
+		const made = horseItem(next.steed ? horseCoat(next.steed.id) : null);
+		const hole = next.bag.findIndex((slot, i) => i < openBagCount(next.bagStage) && slot == null);
+		if (hole >= 0) next.bag[hole] = made;
+		else next.mountItem = made;
+	}
+	if (next.mountItem?.coatId && !next.steed) next.steed = horseCoat(next.mountItem.coatId);
 	useRpg.setState(next);
 	ensureQuest(useRpg.getState, useRpg.setState);
 }
@@ -1916,6 +2308,7 @@ export interface RpgState {
   skillPoints: number;
   chosenTree: string | null;
   hotbar: (string | null)[];
+  pots: { hp: Item | null; mp: Item | null };
   quests: Quest[];
   depot: (Item | null)[];
   blocked: string[];
@@ -1930,7 +2323,21 @@ export interface RpgState {
   stall: { uid: string; item: Item; price: number }[] | null;
   stallSpot: { x: number; z: number } | null;
   steed: { id: string; name: string; coat: string; mane: string; dark: string; muzzle?: string } | null;
+  mountItem: Item | null;
   riding: boolean;
+  greeted: boolean;
+  mentored: boolean;
+  fame: number;
+  kills: number;
+  mines: number;
+  fish: number;
+  damage: number;
+  bossKills: number;
+  duelWins: number;
+  goldEarned: number;
+  npcAsk: NearKind | null;
+  boardFor: NearKind | null;
+  boardMap: string | null;
   down: { x: number; z: number } | null;
   mapLoad: string;
   invOpen: boolean;
@@ -1963,9 +2370,12 @@ export interface RpgState {
   moveSpeed: (sprinting: boolean) => number;
   hurtPlayer: (dmg: number) => boolean;
   addGold: (n: number) => void;
-  noteKill: (mobId?: string) => void;
+  noteKill: (mobId?: string, mobLevel?: number) => void;
+  noteDuelWin: () => void;
+  noteDamage: (n: number) => void;
   startQuest: () => void;
   claimQuest: () => void;
+  takeGiverQuest: () => void;
   notePlace: (name: string) => void;
   grantXp: (n: number) => void;
   interact: () => void;
@@ -1980,9 +2390,17 @@ export interface RpgState {
   imbue: (from: number, to: number) => void;
   listStall: (index: number, price: number) => void;
   unlistStall: (id: string) => void;
+  fulfillStall: (uid: string, price: number) => { item: Item; price: number } | null;
   sellFromBag: (index: number) => void;
   sellEquipped: (slot: EquipSlot) => void;
   toggleRide: () => void;
+  drinkPotion: (kind: "hp" | "mp") => void;
+  setBeltPot: (kind: "hp" | "mp", index: number) => void;
+  takeBeltPot: (kind: "hp" | "mp", index: number) => void;
+  restoreStall: (uid: string, item: Item, price: number) => void;
+  closeStall: () => void;
+  tidyBag: () => void;
+  stowMount: (index: number) => void;
   craftItem: (id: string) => void;
   buyOffer: (id: string) => void;
   startQuestId: (id: string) => void;
@@ -2002,6 +2420,26 @@ const ORES = [
 	{ id: "bakir-cevher", name: "Bakır Cevheri", desc: "Güç taşı eritmek için maden." },
 	{ id: "gumus-cevher", name: "Gümüş Cevheri", desc: "Güç taşı eritmek için maden." }
 ];
+const FISHES = [
+	{ id: "balik-gol", name: "Göl Balığı", desc: "Sakin sudan çıktı." },
+	{ id: "balik-sazan", name: "Sazan", desc: "Dipte dolaşan sazan." },
+	{ id: "balik-turna", name: "Turna", desc: "Sivri dişli turna." },
+	{ id: "balik-yayin", name: "Yayın", desc: "Bıyıklı yayın balığı." },
+	{ id: "balik-alabalik", name: "Alabalık", desc: "Soğuk su alabalığı." },
+	{ id: "balik-levrek", name: "Levrek", desc: "Parlak levrek." },
+	{ id: "balik-kefal", name: "Kefal", desc: "Sürüden kopmuş kefal." },
+	{ id: "balik-yilan", name: "Yılan Balığı", desc: "Kıvrak yılan balığı." },
+	{ id: "balik-capak", name: "Çapak", desc: "Gümüş çapak." },
+	{ id: "balik-kizil", name: "Kızılkanat", desc: "Kırmızı yüzgeçli kızılkanat." }
+];
+let lastFish = "";
+function rollFish() {
+	const others = FISHES.filter((row) => row.id !== lastFish);
+	const repeat = lastFish && Math.random() < 0.4;
+	const pick = repeat ? FISHES.find((row) => row.id === lastFish) || FISHES[0] : others[Math.floor(Math.random() * others.length)] || FISHES[0];
+	lastFish = pick.id;
+	return pick;
+}
 function pushMat(bag, stage, spec) {
 	const limit = openBagCount(stage);
 	const stack = bag.findIndex((item, i) => i < limit && item?.id === spec.id && (item.count ?? 1) < 200);
@@ -2047,25 +2485,27 @@ function stepChore(get, set, dt) {
 		}
 		const t = chore.t + dt;
 		let given = chore.given;
+		let mined = 0;
 		let bag = s.bag;
 		let toast = "";
 		while (given < 3 && t >= MINE_AT[given]) {
 			const ore = ORES[Math.floor(Math.random() * ORES.length)];
 			const next = bag.slice();
 			if (!pushMat(next, s.bagStage, ore)) {
-				set({ bag, chore: null, toast: "Çanta dolu" });
+				set({ bag, chore: null, toast: "Çanta dolu", mines: s.mines + mined });
 				return;
 			}
 			bag = next;
 			given += 1;
+			mined += 1;
 			toast = given >= 3 ? `${ore.name} · 3 maden çıktı` : `${ore.name} · ${given}/3`;
 			bumpQuest(get, set, "mine");
 		}
 		if (given >= 3 || t >= 10) {
-			set({ bag, chore: null, toast: toast || "Damar boşaldı" });
+			set({ bag, chore: null, toast: toast || "Damar boşaldı", mines: s.mines + mined });
 			return;
 		}
-		if (bag !== s.bag) set({ bag, chore: { kind: "mine", t, given }, toast });
+		if (bag !== s.bag) set({ bag, chore: { kind: "mine", t, given }, toast, mines: s.mines + mined });
 		else set({ chore: { kind: "mine", t, given } });
 		return;
 	}
@@ -2080,32 +2520,25 @@ function stepChore(get, set, dt) {
 			set({ chore: { ...chore, t } });
 			return;
 		}
-		const zoneW = 0.08;
+		const zoneW = 0.3;
 		set({
 			chore: {
 				kind: "fish",
 				phase: "bite",
 				t: 0,
 				wait: chore.wait,
-				zone: zoneW / 2 + Math.random() * (1 - zoneW),
+				zone: 0.34 + Math.random() * 0.32,
 				zoneW,
-				needle: Math.random(),
-				dir: Math.random() < 0.5 ? 1 : -1,
-				flick: 0.2 + Math.random() * 0.4
+				needle: 0,
+				dir: 1
 			},
 			toast: "Kancaya bir balık takıldı"
 		});
 		return;
 	}
-	let dir = chore.dir;
-	let flick = (chore.flick ?? 0) - dt;
-	let speed = 1.35 + Math.sin((chore.t + dt) * 11) * 0.85;
-	if (flick <= 0) {
-		dir *= -1;
-		flick = 0.08 + Math.random() * 0.28;
-		speed *= 1.7;
-	}
-	let needle = chore.needle + dir * dt * speed;
+	const step = Math.min(0.05, dt);
+	let dir = chore.dir || 1;
+	let needle = chore.needle + dir * step * 0.46;
 	if (needle >= 1) {
 		needle = 1;
 		dir = -1;
@@ -2114,11 +2547,11 @@ function stepChore(get, set, dt) {
 		dir = 1;
 	}
 	const t = chore.t + dt;
-	if (t >= 3.6) {
+	if (t >= 12) {
 		set({ chore: null, toast: "Geç kaldın, balık kaçtı" });
 		return;
 	}
-	set({ chore: { ...chore, t, needle, dir, flick } });
+	set({ chore: { ...chore, t, needle, dir } });
 }
 export const useRpg = create<RpgState>((set, get) => ({
 	classId: "savasci",
@@ -2159,6 +2592,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 	skillPoints: 0,
 	chosenTree: null,
 	hotbar: blankHotbar(),
+	pots: { hp: null, mp: null },
 	quests: [],
 	depot: blankDepot(),
 	blocked: [],
@@ -2173,7 +2607,21 @@ export const useRpg = create<RpgState>((set, get) => ({
 	stall: null,
 	stallSpot: null,
 	steed: null,
+	mountItem: null,
 	riding: false,
+	greeted: false,
+	mentored: false,
+	fame: 0,
+	kills: 0,
+	mines: 0,
+	fish: 0,
+	damage: 0,
+	bossKills: 0,
+	duelWins: 0,
+	goldEarned: 0,
+	npcAsk: null,
+	boardFor: null,
+	boardMap: null,
 	down: null,
 	mapLoad: "",
 	invOpen: false,
@@ -2187,25 +2635,19 @@ export const useRpg = create<RpgState>((set, get) => ({
 	toast: "",
 	nick: "Savaşçı",
 	hurt: 0,
-	toggleInv: () => set((s) => ({
-		invOpen: !s.invOpen,
-		charOpen: false
-	})),
+	toggleInv: () => set((s) => ({ invOpen: !s.invOpen })),
 	toggleChar: () => get().showChar("stats"),
 	showChar: (tab) => {
 		const released = releaseSmith(get());
 		set((s) => {
 			if (s.charOpen && s.charTab === tab) return {
 				...released,
-				charOpen: false,
-				shop: null
+				charOpen: false
 			};
 			return {
 				...released,
 				charOpen: true,
-				charTab: tab,
-				invOpen: false,
-				shop: null
+				charTab: tab
 			};
 		});
 	},
@@ -2213,11 +2655,17 @@ export const useRpg = create<RpgState>((set, get) => ({
 		...releaseSmith(s),
 		invOpen: false,
 		charOpen: false,
-		shop: null
+		shop: null,
+		boardFor: null,
+		boardMap: null,
+		npcAsk: null
 	})),
 	closeShop: () => set((s) => ({
 		...releaseSmith(s),
-		shop: null
+		shop: null,
+		boardFor: null,
+		boardMap: null,
+		npcAsk: null
 	})),
 	setNick: (nick) => {
 		set({ nick: nick.trim().slice(0, 16) || "Savaşçı" });
@@ -2247,8 +2695,8 @@ export const useRpg = create<RpgState>((set, get) => ({
 			set({ toast: "Kazmak için kazma giymelisin" });
 			return;
 		}
-		if (s.level < (pick.req ?? 30)) {
-			set({ toast: "Kazma için 30. seviye gerekir" });
+		if (s.level < 8) {
+			set({ toast: "Kazma için 8. seviye gerekir" });
 			return;
 		}
 		if (!s.vein) {
@@ -2268,10 +2716,6 @@ export const useRpg = create<RpgState>((set, get) => ({
 		const rod = s.equipped.weapon;
 		if (!rod || rod.id !== "olta") {
 			set({ toast: "Oltayı kuşan" });
-			return;
-		}
-		if (s.level < (rod.req ?? 25)) {
-			set({ toast: "Olta için 25. seviye gerekir" });
 			return;
 		}
 		if (s.near !== "fish") {
@@ -2311,12 +2755,13 @@ export const useRpg = create<RpgState>((set, get) => ({
 			set({ chore: null, toast: "Balık kurtuldu" });
 			return;
 		}
+		const fish = rollFish();
 		const bag = s.bag.slice();
-		if (!pushMat(bag, s.bagStage, { id: "gol-baligi", name: "Göl Balığı", desc: "Gölden çıktı." })) {
-			set({ chore: null, toast: "Çanta dolu, balık kaçtı" });
+		if (!tryReceiveItem({ ...fish, uid: uid(), slot: "belt", level: 1, plus: 0, str: 0, hp: 0, ats: 0, mvs: 0, ctp: 0, kind: "fish", count: 1 })) {
+			set({ chore: null });
 			return;
 		}
-		set({ bag, chore: null, toast: "Balık tutuldu" });
+		set({ chore: null, toast: `${fish.name} tutuldu`, fish: s.fish + 1 });
 		get().grantXp(12);
 		bumpQuest(get, set, "fish");
 	},
@@ -2324,6 +2769,10 @@ export const useRpg = create<RpgState>((set, get) => ({
 		const s = get();
 		if (s.level < 5) {
 			set({ toast: "Yetenek için 5. seviye gerekir" });
+			return;
+		}
+		if (!s.mentored) {
+			set({ toast: "Önce sınıfının ustasına uğra" });
 			return;
 		}
 		const trees = CLASS_TREES[s.classId];
@@ -2366,17 +2815,23 @@ export const useRpg = create<RpgState>((set, get) => ({
 	},
 	castSkill: (id) => {
 		const s = get();
-		if (!id) return;
+		if (!id || s.down) return;
+		if (s.riding) {
+			set({ toast: "At üzerinde yetenek kullanılamaz" });
+			return;
+		}
+		const style = weaponStyleOf(s.equipped.weapon?.id);
+		if (style === "olta" || style === "kazma") {
+			set({ toast: style === "olta" ? "Olta yalnızca balık tutar" : "Kazma yalnızca kazı yapar" });
+			return;
+		}
 		const rank = s.skills[id] ?? 0;
 		if (rank <= 0) {
 			set({ toast: "Bu yetenek öğrenilmedi" });
 			return;
 		}
 		const left = skillCdLeft(id);
-		if (left > .05) {
-			set({ toast: `Bekleme ${left.toFixed(1)} sn` });
-			return;
-		}
+		if (left > .05) return;
 		const cost = 6 + Math.min(rank, 10) * 2;
 		if (s.mana < cost) {
 			set({ toast: "Yetersiz mana" });
@@ -2384,40 +2839,27 @@ export const useRpg = create<RpgState>((set, get) => ({
 		}
 		const sk = skillById(id);
 		const t = totalsOf(s);
-		skillReadyAt[id] = Date.now() + skillWait(id, rank) * 1e3;
 		const mana = s.mana - cost;
 		liveMana = mana;
 		if (!sk || sk.kind === "buff") {
+			skillReadyAt[id] = Date.now() + skillWait(id, rank) * 1e3;
 			const now = Date.now();
 			const cut = Math.min(.55, .16 + rank * .012);
 			if (id === "sv4") {
 				const hp = Math.min(s.hpMax, s.hp + Math.round(s.hpMax * (.16 + rank * .004)));
 				liveHp = hp;
-				set({
-					mana,
-					hp,
-					toast: `${sk?.name ?? "Siper"} · can toparlandı`
-				});
+				set({ mana, hp });
 			} else if (id === "sv6" || id === "nj4") {
 				stepUntil = now + 12e3;
 				stepMul = 1.18 + rank * .008;
-				set({
-					mana,
-					toast: `${sk?.name ?? "Hız"} · hızlandın`
-				});
+				set({ mana });
 			} else if (id === "sv10") {
 				regenUntil = now + 12e3;
-				set({
-					mana,
-					toast: "Direnç · can yenileniyor"
-				});
+				set({ mana });
 			} else {
 				guardUntil = now + 12e3;
 				guardCut = cut;
-				set({
-					mana,
-					toast: `${sk?.name ?? "Siper"} · hasar kesildi`
-				});
+				set({ mana });
 			}
 			return;
 		}
@@ -2425,6 +2867,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 		const power = sk.power + stat * (sk.mag ? .5 : .32);
 		pendingCast = {
 			id,
+			cost,
 			aoe: sk.kind === "aoe",
 			dmg: skillDamage(rank, power),
 			hits: sk.hits ?? 1,
@@ -2432,10 +2875,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 			dot: sk.kind === "dot",
 			crit: Boolean(sk.crit)
 		};
-		set({
-			mana,
-			toast: `${sk.name} · ${skillTier(rank)}`
-		});
+		set({ mana });
 	},
 	acceptQuests: () => {
 		const s = get();
@@ -2446,63 +2886,112 @@ export const useRpg = create<RpgState>((set, get) => ({
 	},
 	startQuest: () => {
 		const s = get();
-		const map = s.shop === "herald" ? s.mentor || "koy2" : "koy";
-		const open = s.quests.find((quest) => !quest.claimed);
-		if (open) {
-			set({ toast: open.done ? "Önce görevi tamamla" : "Açık görevin bitmeden yenisi alınmaz" });
-			return;
-		}
-		const next = QUEST_BOARD.find((row) => row.map === map && !s.quests.some((quest) => quest.id === row.id));
+		const giver = s.boardFor || s.near;
+		const mapId = s.boardMap || questMapFor(giver, s.mentor);
+		const next = offerForNpc(s.quests, s.level, giver, mapId);
 		if (!next) {
-			set({ toast: "Bu bölgenin görevi bitti" });
+			const story = nextStoryRow(s.quests);
+			set({ toast: story ? `Sıradaki görev ${giverLabel(questGiver(story))} üzerinde` : "Alınacak görev yok" });
 			return;
 		}
-		if (s.level < next.min) {
-			set({ toast: `Seviye ${next.min} gerekir` });
+		get().takeGiverQuest();
+	},
+	takeGiverQuest: () => {
+		const s = get();
+		const near = s.boardFor || s.near;
+		const mapId = s.boardMap || questMapFor(near, s.mentor);
+		const story = nextStoryRow(s.quests);
+		const blocking = s.quests.find((quest) => !quest.claimed && !(quest.done || (quest.need > 0 && quest.have >= quest.need)));
+		if (blocking) {
+			set({ toast: "Açık görevin bitmeden yenisi alınmaz" });
 			return;
+		}
+		const next = offerForNpc(s.quests, s.level, near, mapId);
+		if (!next) {
+			if (story && questMatchesNpc(story, near, mapId) && s.level < story.min) {
+				set({ toast: `${story.name} için seviye ${story.min} gerekir` });
+				return;
+			}
+			const who = story ? giverLabel(questGiver(story)) : "";
+			set({ toast: story ? `Sıradaki görev ${who} üzerinde` : "Burada alınacak görev yok" });
+			return;
+		}
+		const bag = s.bag.slice();
+		let toast = `Görev alındı: ${next.title || next.name}`;
+		if (questGiver(next) === "fisher") {
+			for (let n = 0; n < 12; n++) pushMat(bag, s.bagStage, { id: "yem", name: "Yem", desc: "Yemsiz olta suya inmez." });
+			toast = "Görev alındı. Balıkçı 12 yem verdi.";
 		}
 		set({
 			quests: [...s.quests, questFromBoard(next)],
-			toast: `Görev alındı: ${next.name}`
+			bag,
+			toast,
+			shop: null,
+			boardFor: null,
+			boardMap: null,
+			npcAsk: null,
 		});
 	},
 	claimQuest: () => {
 		const s = get();
-		const map = s.shop === "herald" ? s.mentor || "koy2" : "koy";
-		const ready = s.quests.find((quest) => quest.done && !quest.claimed && QUEST_BOARD.some((row) => row.id === quest.id && row.map === map));
+		const giver = s.boardFor || (s.shop === "herald" ? "herald" : s.shop === "guard" ? "guard" : null);
+		const mapId = (giver === "herald" && s.boardMap) ? s.boardMap : questMapFor(giver, s.mentor);
+		const ready = giver ? readyForNpc(s.quests, giver, mapId) : null;
 		if (!ready) {
-			set({ toast: "Tamamlanan görev yok" });
+			set({ toast: "Bu kişide teslim edilecek görev yok" });
 			return;
 		}
-		const row = QUEST_BOARD.find((item) => item.id === ready.id);
-		set({
-			quests: s.quests.map((quest) => quest.id === ready.id ? { ...quest, claimed: true } : quest)
-		});
-		payQuest(get, ready.title, row?.xp ?? 80, row?.gold ?? 20);
+		const row = questBoardRow(ready);
+		if (row?.reward && row.reward !== "At" && !s.bag.some((slot) => slot == null)) {
+			set({ toast: "Çanta dolu. Yer aç, sonra teslim et." });
+			return;
+		}
+		const quests = s.quests.map((quest) => quest.id === ready.id ? { ...quest, claimed: true } : quest);
+		set({ quests });
+		const xp = row?.xp ?? 80;
+		const gold = row?.gold ?? 20;
+		payQuest(get, ready.title, xp, gold);
+		let bag = get().bag.slice();
+		let steed = get().steed;
+		let mountItem = get().mountItem;
+		let riding = get().riding;
+		let toast = `${ready.title} teslim edildi. +${xp} XP +${gold} altın`;
 		if (row?.reward === "At") {
-			const coats = [
-				{ id: "doru", name: "Doru", coat: "#6a3b22", mane: "#1a120e", dark: "#241810", muzzle: "#8a5340" },
-				{ id: "siyah", name: "Siyah", coat: "#1c1916", mane: "#0a0908", dark: "#0e0c0a", muzzle: "#3a3028" },
-				{ id: "al", name: "Al", coat: "#8a3a22", mane: "#2a140e", dark: "#3a1c14", muzzle: "#c4846a" },
-				{ id: "kir", name: "Kır", coat: "#c8c2b6", mane: "#4e4a44", dark: "#6a6560", muzzle: "#ddd6ca" },
-				{ id: "izabel", name: "İzabel", coat: "#c4a05a", mane: "#f4f0e6", dark: "#8a6840", muzzle: "#e6d2a8" },
-				{ id: "yagiz", name: "Yağız", coat: "#3a2418", mane: "#120e0c", dark: "#1a100c", muzzle: "#6a4030" },
-				{ id: "demirkir", name: "Demirkır", coat: "#6e7378", mane: "#1a1c1e", dark: "#3a3e42", muzzle: "#9aa0a4" },
-			];
-			const coat = coats[Math.floor(Math.random() * coats.length)];
-			set({ steed: coat, riding: false, toast: `${coat.name} at senin. H ile bin.` });
+			const coat = HORSE_COATS[Math.floor(Math.random() * HORSE_COATS.length)];
+			steed = coat;
+			riding = false;
+			const made = horseItem(coat);
+			const hole = bag.findIndex((slot, i) => i < openBagCount(get().bagStage) && slot == null);
+			if (hole >= 0) bag[hole] = made;
+			else mountItem = made;
+			toast = `${coat.name} at envanterine geldi.`;
 		} else if (row?.reward) {
 			const plus = Math.random() < 0.05 ? 1 : 0;
 			const item = rewardItem(row.reward, plus);
-			const bag = get().bag.slice();
 			const hole = bag.findIndex((slot) => slot == null);
 			if (hole >= 0) bag[hole] = item;
-			set({
-				bag,
-				toast: plus ? `${item.name} +${plus} geldi` : `${item.name} geldi`
-			});
+			else toast = "Çanta dolu, ödül sığmadı";
+			if (hole >= 0) toast = plus ? `${item.name} +${plus} geldi` : `${item.name} geldi`;
 		}
-		ensureQuest(get, set);
+		const level = get().level;
+		const next = nextStoryRow(get().quests);
+		const same = Boolean(next && giver && questMatchesNpc(next, giver, mapId) && level >= (next.min || 1));
+		if (same) toast = `${toast} Sıradaki görev hazır.`;
+		else if (next) {
+			const need = level < next.min ? ` Seviye ${next.min} gerekir.` : "";
+			toast = `${toast} Sıradaki: ${next.name} — ${giverLabel(questGiver(next))}.${need}`;
+		}
+		set({
+			bag,
+			steed,
+			mountItem,
+			riding,
+			toast,
+			boardFor: same ? giver : null,
+			boardMap: same ? mapId : null,
+			shop: same ? (giver === "herald" ? "herald" : "guard") : null,
+			npcAsk: null,
+		});
 	},
 	useBagItem: (index) => {
 		const s = get();
@@ -2534,6 +3023,14 @@ export const useRpg = create<RpgState>((set, get) => ({
 			return;
 		}
 		if (it.kind === "potion") {
+			if (it.id === "pot-hp" && s.hp >= s.hpMax - 0.4) {
+				set({ toast: "Canın zaten dolu" });
+				return;
+			}
+			if (it.id === "pot-mp" && s.mana >= s.manaMax - 0.4) {
+				set({ toast: "Manan zaten dolu" });
+				return;
+			}
 			spend();
 			const now = Date.now();
 			if (it.id === "pot-hp") {
@@ -2624,9 +3121,10 @@ export const useRpg = create<RpgState>((set, get) => ({
 				set({ toast: "Önce eşyayı koy" });
 				return;
 			}
-			const need = matForPlus(s.smithItem.plus ?? 0, s.smithItem.slot);
-			if (it.kind !== "mat" || it.id !== need.id) {
-				set({ toast: `Gerekli: ${need.name}` });
+			const plus = s.smithItem.plus ?? 0;
+			const need = matForPlus(plus, s.smithItem.slot);
+			if (!matFits(it, s.smithItem)) {
+				set({ toast: plus < 6 ? "Buraya yükseltme taşı konur" : `Gerekli: ${need.name}` });
 				return;
 			}
 			const bag = s.bag.slice();
@@ -2656,7 +3154,14 @@ export const useRpg = create<RpgState>((set, get) => ({
 			}
 			bag[hole] = previous;
 		}
-		set({ bag, smithItem: it });
+		const extra = attachSmith(bag, it, s.smithStone, s.smithMat);
+		set({
+			bag,
+			smithItem: it,
+			smithStone: extra.smithStone,
+			smithMat: extra.smithMat,
+			toast: extra.smithMat ? "Eşya kondu. Taş ve malzeme envanterden alındı." : "Eşya kondu. Envanterde uygun taş yok."
+		});
 	},
 	takeSmith: (which, dest) => {
 		const s = get();
@@ -2694,9 +3199,10 @@ export const useRpg = create<RpgState>((set, get) => ({
 			return;
 		}
 		const stone = s.smithStone;
-		const need = matForPlus(it.plus, it.slot);
-		if (!s.smithMat || s.smithMat.id !== need.id) {
-			set({ toast: `Gerekli: ${need.name}` });
+		const plus = it.plus ?? 0;
+		const need = matForPlus(plus, it.slot);
+		if (!matFits(s.smithMat, it)) {
+			set({ toast: plus < 6 ? "Envanterde yükseltme taşı yok" : `Gerekli: ${need.name}` });
 			return;
 		}
 		const chance = upgradeChance(it.plus, Boolean(stone));
@@ -2706,22 +3212,40 @@ export const useRpg = create<RpgState>((set, get) => ({
 		if (ok) {
 			for (const slot of Object.keys(equipped)) if (equipped[slot]?.uid === it.uid) equipped[slot] = nextItem;
 		}
+		const bag = s.bag.slice();
+		const keptMat = ok ? null : s.smithMat;
+		const filled = attachSmith(bag, nextItem, null, keptMat);
 		const next = {
 			...s,
+			bag,
 			smithItem: nextItem,
-			smithStone: null,
-			smithMat: null,
+			smithStone: filled.smithStone,
+			smithMat: filled.smithMat,
 			equipped,
 			gold: s.gold - cost,
 			gearRev: ok ? s.gearRev + 1 : s.gearRev,
-			toast: ok ? "Yükseltme Başarılı" : "Yükseltme Başarısız"
+			toast: ok ? "Yükseltme Başarılı" : "Yükseltme Başarısız. Taş duruyor, tekrar bas."
 		};
 		if (ok) applyVitals(next, false);
 		set(next);
 		if (ok && nextItem.plus >= 6) bumpQuest(get, set, "plus6");
 		if (ok && nextItem.plus >= 10) bumpQuest(get, set, "plus10");
 	},
-	noteKill: (mobId) => bumpQuest(get, set, "kill", mobId),
+	noteKill: (mobId, mobLevel) => {
+		bumpQuest(get, set, "kill", mobId);
+		const s = get();
+		const ml = Math.max(1, Math.floor(Number(mobLevel) || s.level));
+		const gap = Math.max(0, s.level - ml);
+		const gain = Math.max(1, Math.round((8 + ml * 0.6) * Math.pow(0.9, Math.min(20, gap))));
+		const bossKill = BOSSES.some((row) => row.id === mobId);
+		set({ fame: (s.fame || 0) + gain, kills: (s.kills || 0) + 1, bossKills: (s.bossKills || 0) + (bossKill ? 1 : 0) });
+	},
+	noteDuelWin: () => set((s) => ({ duelWins: (s.duelWins || 0) + 1 })),
+	noteDamage: (n) => {
+		const add = Math.max(0, Math.floor(Number(n) || 0));
+		if (!add) return;
+		set({ damage: (get().damage || 0) + add });
+	},
 	notePlace: (place) => {
 		if (!place) return;
 		const s = get();
@@ -2734,7 +3258,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 			changed = true;
 			const have = seen.length + 1;
 			const done = have >= quest.need;
-			if (done) doneTitle = quest.title;
+			if (done) doneTitle = `${quest.title} hazır. Köprü görevi teslim edilir.`;
 			return {
 				...quest,
 				seen: [...seen, place],
@@ -2745,7 +3269,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 		if (!changed) return;
 		set({
 			quests,
-			toast: doneTitle ? `${doneTitle} hazır. Görevliye dön.` : s.toast
+			toast: doneTitle || s.toast
 		});
 	},
 	noteMentor: () => bumpQuest(get, set, "mentor"),
@@ -2806,34 +3330,60 @@ export const useRpg = create<RpgState>((set, get) => ({
 				charOpen: true,
 				charTab: "skills",
 				invOpen: false,
-				shop: null
+				shop: null,
+				mentored: true,
+				toast: "Usta ağacı açtı. Artık puan harcayabilirsin."
 			});
 			return;
 		}
 		if (near === "guard" || near === "herald") {
-			const talkId = "guard";
-			bumpQuest(get, set, "talk", talkId);
+			bumpQuest(get, set, "talk", near === "herald" ? "herald" : "guard");
 			const s = get();
-			const bring = s.quests.find((quest) => !quest.claimed && !quest.done && quest.kind === "bring");
-			if (bring) {
-				const idx = s.bag.findIndex((item) => item && (item.id === bring.mob || item.name === bring.name));
-				if (idx >= 0) {
-					const bag = s.bag.slice();
-					const it = bag[idx];
-					const left = (it.count ?? 1) - 1;
-					bag[idx] = left > 0 ? { ...it, count: left } : null;
-					set({ bag });
-					bumpQuest(get, set, "bring");
-				}
+			const mapId = questMapFor(near, s.mentor);
+			const ready = readyForNpc(s.quests, near, mapId);
+			const active = activeForNpc(s.quests, near, mapId);
+			const offer = offerForNpc(s.quests, s.level, near, mapId);
+			const locked = storyLockForNpc(s.quests, s.level, near, mapId);
+			const underway = active && !active.done && !(active.need > 0 && active.have >= active.need);
+			if (ready || offer || locked || underway) {
+				set({
+					shop: near === "herald" ? "herald" : "guard",
+					boardFor: near,
+					boardMap: mapId,
+					npcAsk: null,
+					charOpen: false,
+					invOpen: false,
+				});
+				return;
 			}
-			get().acceptQuests();
+			const doneElse = s.quests.find((quest) => !quest.claimed && (quest.done || (quest.need > 0 && quest.have >= quest.need)));
+			if (doneElse) {
+				set({
+					toast: `${doneElse.title} — ${giverLabel(questGiver(questBoardRow(doneElse)))} teslim alır.`,
+					shop: null,
+					boardFor: null,
+					boardMap: null,
+					npcAsk: null,
+				});
+				return;
+			}
+			const story = nextStoryRow(s.quests);
+			const who = story ? giverLabel(questGiver(story)) : "";
+			const lock = story && s.level < story.min ? ` Seviye ${story.min} gerekir.` : "";
+			set({
+				toast: story ? `Sıradaki görev ${who} üzerinde.${lock}` : "Bu bölgenin görevi bitti",
+				shop: null,
+				boardFor: null,
+				boardMap: null,
+				npcAsk: null,
+			});
 			return;
 		}
 		if (near === "smith" || near === "market" || near === "fisher" || near === "miner" || near === "craft") {
 			bumpQuest(get, set, "talk", near);
 		}
 		if (near === "gate") {
-			set({ shop: "gate", charOpen: false });
+			set({ shop: "gate", charOpen: false, npcAsk: null });
 			return;
 		}
 		if (near === "well") {
@@ -2860,10 +3410,59 @@ export const useRpg = create<RpgState>((set, get) => ({
 		set((s) => {
 			const opening = s.shop !== near;
 			const leaving = !opening || near !== "smith";
-			const vendor = near === "weapon" || near === "armor" || near === "market" || near === "stable" || near === "fisher" || near === "miner" || near === "smith";
+			const vendor = near === "weapon" || near === "armor" || near === "market" || near === "stable" || near === "fisher" || near === "miner" || near === "smith" || near === "craft" || near === "depot";
+			let bag = s.bag;
+			let toast = s.toast;
+			let quests = s.quests;
+			if (opening && near === "fisher") {
+				const needsBait = quests.some((quest) => !quest.claimed && (quest.id === "q-yem" || quest.kind === "fish"));
+				const hasBait = bag.some((item) => item?.id === "yem" && (item.count ?? 1) > 0);
+				if (needsBait && !hasBait) {
+					bag = bag.slice();
+					for (let n = 0; n < 12; n++) pushMat(bag, s.bagStage, { id: "yem", name: "Yem", desc: "Yemsiz olta suya inmez." });
+					toast = "Balıkçı 12 yem verdi";
+				} else {
+					const bring = quests.find((quest) => !quest.claimed && !quest.done && quest.have < quest.need && quest.kind === "bring" && (quest.id === "q-yem" || quest.mob === "yem"));
+					if (bring && hasBait) {
+						bag = bag.slice();
+						const idx = bag.findIndex((item) => item?.id === "yem" && (item.count ?? 1) > 0);
+						if (idx >= 0) {
+							const it = bag[idx];
+							const left = (it.count ?? 1) - 1;
+							bag[idx] = left > 0 ? { ...it, count: left } : null;
+							const have = bring.have + 1;
+							const done = have >= bring.need;
+							quests = quests.map((quest) => quest.id === bring.id ? { ...quest, have, done } : quest);
+							toast = done ? `${bring.title} hazır. Balıkçıya teslim et.` : `Yem verildi · ${have}/${bring.need}`;
+						}
+					}
+				}
+			}
+			const questNpc = near === "smith" || near === "market" || near === "fisher" || near === "miner" || near === "stable" || near === "craft";
+			if (opening && questNpc) {
+				const mapId = questMapFor(near, s.mentor);
+				const ready = readyForNpc(quests, near, mapId);
+				const active = activeForNpc(quests, near, mapId);
+				const offer = offerForNpc(quests, s.level, near, mapId);
+				const locked = storyLockForNpc(quests, s.level, near, mapId);
+				const underway = active && !active.done && !(active.need > 0 && active.have >= active.need);
+				const elsewhere = quests.find((quest) => !quest.claimed && (quest.done || (quest.need > 0 && quest.have >= quest.need)) && !questMatchesNpc(questBoardRow(quest), near, mapId));
+				if (ready || (offer && !active)) {
+					return { shop: "guard", boardFor: near, boardMap: mapId, charOpen: false, npcAsk: null, invOpen: false, bag, toast, quests, ...(leaving ? releaseSmith(s) : {}) };
+				}
+				if (underway || locked || elsewhere) {
+					return { npcAsk: near, shop: null, boardFor: null, boardMap: null, invOpen: false, charOpen: false, bag, toast, quests, ...(leaving ? releaseSmith(s) : {}) };
+				}
+			}
 			return {
 				...(leaving ? releaseSmith(s) : {}),
 				shop: opening ? near : null,
+				boardFor: null,
+				boardMap: null,
+				npcAsk: null,
+				bag,
+				toast,
+				quests,
 				invOpen: vendor && opening ? true : s.invOpen,
 				charOpen: false
 			};
@@ -2892,20 +3491,30 @@ export const useRpg = create<RpgState>((set, get) => ({
 			get().openBagChest(index);
 			return;
 		}
+		if (it.kind === "mount" || it.id === "binek-at") {
+			const bag = s.bag.slice();
+			bag[index] = s.mountItem;
+			const steed = horseCoat(it.coatId) || s.steed;
+			set({ bag, mountItem: it, steed, toast: "At kuşanıldı." });
+			return;
+		}
 		if (it.kind && it.kind !== "gear" && it.id !== "kazma" && it.id !== "olta") {
 			get().useBagItem(index);
 			return;
 		}
-		if (it.slot === "weapon" && !weaponFits(s.classId, it.id)) {
-			set({ toast: "Bu silah senin sınıfına ait değil" });
-			return;
-		}
-		if (it.forClass && it.forClass !== "hepsi" && it.forClass !== s.classId) {
+		if (it.slot === "weapon") {
+			const tagged = it.forClass && it.forClass !== "hepsi";
+			if (tagged ? it.forClass !== s.classId : !weaponFits(s.classId, it.id)) {
+				set({ toast: "Bu silah senin sınıfına ait değil" });
+				return;
+			}
+		} else if (it.forClass && it.forClass !== "hepsi" && it.forClass !== s.classId) {
 			set({ toast: "Bu eşya senin sınıfına ait değil" });
 			return;
 		}
-		if ((it.req ?? 1) > s.level) {
-			set({ toast: `Seviye ${it.req} gerekir` });
+		const need = it.id === "kazma" ? 8 : it.req ?? 1;
+		if (need > s.level) {
+			set({ toast: `Seviye ${need} gerekir` });
 			return;
 		}
 		const prev = s.equipped[it.slot];
@@ -2962,6 +3571,10 @@ export const useRpg = create<RpgState>((set, get) => ({
 		const s = get();
 		const it = s.equipped[slot];
 		if (!it || index < 0 || index >= s.bag.length) return;
+		if (index >= openBagCount(s.bagStage)) {
+			set({ toast: "Slot kilitli" });
+			return;
+		}
 		const bag = s.bag.slice();
 		const other = bag[index] ?? null;
 		const equipped = { ...s.equipped };
@@ -2996,16 +3609,20 @@ export const useRpg = create<RpgState>((set, get) => ({
 		if (from < 0 || from >= s.bag.length) return;
 		const item = s.bag[from];
 		if (!item) return;
-		const start = page * 24;
-		if (from >= start && from < start + 24) return;
+		const start = page * PAGE_SIZE;
+		if (from >= start && from < start + PAGE_SIZE) return;
+		const open = openBagCount(s.bagStage);
 		const bag = s.bag.slice();
 		let dest = -1;
-		for (let i = 0; i < 24; i++) if (bag[start + i] == null) {
-			dest = start + i;
-			break;
+		for (let i = 0; i < PAGE_SIZE; i++) {
+			const index = start + i;
+			if (index < open && bag[index] == null) {
+				dest = index;
+				break;
+			}
 		}
 		if (dest < 0) {
-			set({ toast: "Bu pencere dolu" });
+			set({ toast: start >= open ? "Slot kilitli" : "Bu pencere dolu" });
 			return;
 		}
 		bag[dest] = item;
@@ -3016,7 +3633,14 @@ export const useRpg = create<RpgState>((set, get) => ({
 		});
 	},
 	swapBag: (from, to) => {
-		const bag = get().bag.slice();
+		const s = get();
+		if (from === to || from < 0 || to < 0 || from >= s.bag.length || to >= s.bag.length) return;
+		const open = openBagCount(s.bagStage);
+		if (from >= open || to >= open) {
+			set({ toast: "Slot kilitli" });
+			return;
+		}
+		const bag = s.bag.slice();
 		const tmp = bag[from];
 		bag[from] = bag[to] ?? null;
 		bag[to] = tmp ?? null;
@@ -3051,7 +3675,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 		}
 		const empty = bag.findIndex((item, i) => i < limit && item == null);
 		if (empty < 0) {
-			set({ toast: "Çanta dolu" });
+			set({ toast: "Envanterinde yer yok" });
 			return;
 		}
 		bag[empty] = cloneShop(def);
@@ -3127,22 +3751,24 @@ export const useRpg = create<RpgState>((set, get) => ({
 			}
 			s.vials = 0;
 			s.skillPoints += 1;
-			notes.push(`Seviye ${s.level}. +1 yetenek puanı`);
+			notes.push(`Seviye ${s.level}`);
 		}
 		if (s.level >= 99) s.xp = Math.min(s.xp, Math.max(0, s.xpTo - 1));
 		const filled = Math.min(4, Math.floor(s.xp / s.xpTo * 4 + 1e-6));
 		while (s.vials < filled) {
 			s.vials += 1;
 			s.unspent += 1;
-			notes.push(`Tüp ${s.vials}/4 doldu. +1 puan`);
 		}
 		applyVitals(s, notes.some((n) => n.startsWith("Seviye")));
-		s.toast = notes[0] ?? s.toast;
+		if (notes.length) s.toast = notes[0];
 		set(s);
 		ensureQuest(get, set);
 		return notes;
 	},
-	addGold: (n) => set((s) => ({ gold: s.gold + (bonusLive(s.bonusUntil) ? Math.round(n * 1.15) : n) })),
+	addGold: (n) => set((s) => {
+		const gain = Math.max(0, Math.floor(bonusLive(s.bonusUntil) ? Math.round(n * 1.15) : n));
+		return { gold: s.gold + gain, goldEarned: (s.goldEarned || 0) + gain };
+	}),
 	imbue: (from, to) => {
 		const s = get();
 		const scroll = s.bag[from];
@@ -3184,12 +3810,17 @@ export const useRpg = create<RpgState>((set, get) => ({
 		const next = { ...s, bag, equipped, gearRev: s.gearRev + 1, toast: list[list.length - 1].name };
 		applyVitals(next, false);
 		set(next);
+		bumpQuest(get, set, "enchant");
 	},
 	listStall: (index, price) => {
 		const s = get();
 		const it = s.bag[index];
 		const cost = Math.max(1, Math.floor(Number(price) || 0));
 		if (!it || !Array.isArray(s.stall)) return;
+		if (s.stall.length >= 12) {
+			set({ toast: "Pazar dolu" });
+			return;
+		}
 		if (it.id === "starter-chest" || it.kind === "bag") {
 			set({ toast: "Bu eşya satılmaz" });
 			return;
@@ -3204,6 +3835,18 @@ export const useRpg = create<RpgState>((set, get) => ({
 			toast: `${it.name} satışta · ${cost} altın`
 		});
 		bumpQuest(get, set, "list");
+	},
+	fulfillStall: (uid, price) => {
+		const s = get();
+		if (!Array.isArray(s.stall)) return null;
+		const row = s.stall.find((entry) => entry.uid === uid);
+		if (!row || row.price !== Math.max(1, Math.floor(Number(price) || 0))) return null;
+		set({
+			stall: s.stall.filter((entry) => entry.uid !== uid),
+			gold: s.gold + row.price,
+			toast: `${row.item?.name || "Eşya"} satıldı · ${row.price} altın`
+		});
+		return { item: row.item, price: row.price };
 	},
 	unlistStall: (id) => {
 		const s = get();
@@ -3228,8 +3871,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 			return;
 		}
 		const bag = s.bag.slice();
-		const count = it.count ?? 1;
-		const gold = Math.max(1, Math.round((it.price || 6 + (it.level || 1) * 2 + (it.plus || 0) * 12) * 0.3)) * count;
+		const gold = saleGold(it);
 		bag[index] = null;
 		set({ bag, gold: s.gold + gold, toast: `${it.name} satıldı · ${gold} altın` });
 		bumpQuest(get, set, "sell");
@@ -3242,8 +3884,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 			set({ toast: "Bu eşya satılmaz" });
 			return;
 		}
-		const count = it.count ?? 1;
-		const gold = Math.max(1, Math.round((it.price || 6 + (it.level || 1) * 2 + (it.plus || 0) * 12) * 0.3)) * count;
+		const gold = saleGold(it);
 		const equipped = { ...s.equipped, [slot]: null };
 		const next = { ...s, equipped, gold: s.gold + gold, gearRev: s.gearRev + 1, toast: `${it.name} satıldı · ${gold} altın` };
 		applyVitals(next, false);
@@ -3257,12 +3898,183 @@ export const useRpg = create<RpgState>((set, get) => ({
 			set({ toast: "Önce elindeki işi bırak" });
 			return;
 		}
-		if (!s.steed) {
-			set({ toast: s.level >= 15 ? "Atın yok. İkinci köyde Seyis'in Atı görevini bitir." : "At görevi 15. seviyede açılır." });
+		const limit = openBagCount(s.bagStage);
+		if (s.riding) {
+			set({ riding: false, toast: "Attan indin" });
 			return;
 		}
-		const riding = !s.riding;
-		set({ riding, toast: riding ? `${s.steed.name} ata bindin. H ile inersin.` : "Attan indin." });
+		const bag = s.bag.slice();
+		let item = s.mountItem;
+		if (!item) {
+			const idx = bag.findIndex((slot, i) => i < limit && (slot?.id === "binek-at" || slot?.kind === "mount"));
+			if (idx >= 0) {
+				item = bag[idx];
+				bag[idx] = null;
+			}
+		}
+		const earned = s.quests.some((quest) => quest.id === "q-at" && quest.claimed);
+		if (!item && (s.steed || earned)) item = horseItem(s.steed ? horseCoat(s.steed.id) : HORSE_COATS[0]);
+		if (!item) {
+			set({ toast: s.level >= 15 ? "Atın yok. Seyis'in Atı görevini bitir." : "At görevi 15. seviyede açılır." });
+			return;
+		}
+		const steed = s.steed || horseCoat(item.coatId);
+		set({ bag, mountItem: item, steed, riding: true, toast: `${steed.name} ata bindin.` });
+	},
+	drinkPotion: (kind) => {
+		const s = get();
+		if (s.down) return;
+		const pot = s.pots[kind];
+		if (!pot || (pot.count ?? 1) <= 0) {
+			set({ toast: kind === "hp" ? "Can yuvası boş. Kırmızı iksiri sürükle." : "Mana yuvası boş. Mavi iksiri sürükle." });
+			return;
+		}
+		if (kind === "hp" && s.hp >= s.hpMax - 0.4) {
+			set({ toast: "Canın zaten dolu" });
+			return;
+		}
+		if (kind === "mp" && s.mana >= s.manaMax - 0.4) {
+			set({ toast: "Manan zaten dolu" });
+			return;
+		}
+		const left = (pot.count ?? 1) - 1;
+		const pots = { ...s.pots, [kind]: left > 0 ? { ...pot, count: left } : null };
+		if (kind === "hp") {
+			const hp = Math.min(s.hpMax, s.hp + s.hpMax * 0.4);
+			liveHp = hp;
+			set({ pots, hp, toast: "Can iksiri" });
+			return;
+		}
+		const mana = Math.min(s.manaMax, s.mana + s.manaMax * 0.4);
+		liveMana = mana;
+		set({ pots, mana, toast: "Mana iksiri" });
+	},
+	setBeltPot: (kind, index) => {
+		const s = get();
+		const it = s.bag[index];
+		const want = kind === "hp" ? "pot-hp" : "pot-mp";
+		if (!it || it.id !== want) {
+			set({ toast: kind === "hp" ? "Can yuvasına kırmızı iksir sürükle" : "Mana yuvasına mavi iksir sürükle" });
+			return;
+		}
+		const bag = s.bag.slice();
+		bag[index] = null;
+		const prev = s.pots[kind];
+		if (prev && prev.id === it.id) {
+			const count = (prev.count ?? 1) + (it.count ?? 1);
+			const pots = { ...s.pots, [kind]: { ...prev, count: Math.min(200, count) } };
+			if (count > 200) bag[index] = { ...it, count: count - 200 };
+			set({ bag, pots, toast: `${it.name} yuvaya kondu` });
+			return;
+		}
+		if (prev) bag[index] = prev;
+		set({ bag, pots: { ...s.pots, [kind]: it }, toast: `${it.name} yuvaya kondu` });
+	},
+	takeBeltPot: (kind, index) => {
+		const s = get();
+		const pot = s.pots[kind];
+		if (!pot) return;
+		if (index < 0 || index >= openBagCount(s.bagStage)) {
+			set({ toast: "Slot kilitli" });
+			return;
+		}
+		const bag = s.bag.slice();
+		const other = bag[index];
+		if (!other) {
+			bag[index] = pot;
+			set({ bag, pots: { ...s.pots, [kind]: null }, toast: `${pot.name} çantaya alındı` });
+			return;
+		}
+		if (other.id === pot.id && (other.count ?? 1) + (pot.count ?? 1) <= 200) {
+			bag[index] = { ...other, count: (other.count ?? 1) + (pot.count ?? 1) };
+			set({ bag, pots: { ...s.pots, [kind]: null }, toast: `${pot.name} çantaya alındı` });
+			return;
+		}
+		set({ toast: "Yuva dolu" });
+	},
+	restoreStall: (id, item, price) => {
+		const s = get();
+		const stall = Array.isArray(s.stall) ? s.stall.slice() : [];
+		if (!stall.some((row) => row.uid === id)) stall.push({ uid: id || item.uid, item, price: Math.max(1, price) });
+		const here = readSim();
+		set({
+			stall,
+			gold: Math.max(0, s.gold - Math.max(0, price)),
+			stallSpot: s.stallSpot || { x: here.x, z: here.z },
+			toast: "Alıcıda yer yoktu, eşya pazarda kaldı"
+		});
+	},
+	closeStall: () => {
+		const s = get();
+		const bag = s.bag.slice();
+		const left = [];
+		const limit = openBagCount(s.bagStage);
+		for (const row of s.stall || []) {
+			const hole = bag.findIndex((slot, i) => i < limit && slot == null);
+			if (hole >= 0) bag[hole] = row.item;
+			else left.push(row);
+		}
+		set({
+			bag,
+			stall: left.length ? left : null,
+			stallSpot: left.length ? s.stallSpot : null,
+			shop: null,
+			toast: left.length ? "Çanta dolu, bazı ilanlar duruyor" : "Pazar kapatıldı"
+		});
+	},
+	tidyBag: () => {
+		const s = get();
+		const limit = openBagCount(s.bagStage);
+		const bag = s.bag.slice();
+		const groups = new Map();
+		const holes = [];
+		const stackable = (it) => it && (it.kind === "mat" || it.kind === "potion" || it.kind === "fish");
+		for (let i = 0; i < limit; i++) {
+			const it = bag[i];
+			if (!stackable(it)) continue;
+			const row = groups.get(it.id) || { proto: it, n: 0 };
+			row.n += it.count ?? 1;
+			groups.set(it.id, row);
+			bag[i] = null;
+			holes.push(i);
+		}
+		let cursor = 0;
+		for (const row of groups.values()) {
+			let left = row.n;
+			while (left > 0 && cursor < holes.length) {
+				const take = Math.min(200, left);
+				bag[holes[cursor]] = { ...row.proto, count: take, uid: cursor === 0 ? row.proto.uid : uid() };
+				left -= take;
+				cursor += 1;
+			}
+		}
+		set({ bag, toast: "Envanter düzenlendi" });
+	},
+	stowMount: (index) => {
+		const s = get();
+		if (s.riding) {
+			set({ toast: "Önce attan in" });
+			return;
+		}
+		const it = s.mountItem;
+		if (!it || index < 0 || index >= s.bag.length) return;
+		if (index >= openBagCount(s.bagStage)) {
+			set({ toast: "Kilitli yuva" });
+			return;
+		}
+		const bag = s.bag.slice();
+		const other = bag[index];
+		if (!other) {
+			bag[index] = it;
+			set({ bag, mountItem: null, toast: "At çantaya alındı" });
+			return;
+		}
+		if (other.kind === "mount" || other.id === "binek-at") {
+			bag[index] = it;
+			set({ bag, mountItem: other, steed: horseCoat(other.coatId) || s.steed, toast: "At değişti" });
+			return;
+		}
+		set({ toast: "Bu yuva dolu" });
 	},
 	buyOffer: (id) => {
 		const offer = BAZAAR_OFFERS.find((row) => row.id === id);
@@ -3375,8 +4187,9 @@ export const useRpg = create<RpgState>((set, get) => ({
 		set({ hp: 0, down: { x: here.x, z: here.z }, toast: "", chore: null });
 	},
 	reviveHere: () => {
+		reviveBoostUntil = Date.now() + 16000;
 		liveHp = 1;
-		set({ hp: 1, down: null, toast: "Canın yavaş dolacak" });
+		set({ hp: 1, down: null, toast: "Canın doluyor" });
 	},
 	reviveTown: () => {
 		const here = readSim();
@@ -3389,8 +4202,10 @@ export const useRpg = create<RpgState>((set, get) => ({
 	hurtPlayer: (dmg) => {
 		if (get().down) return false;
 		const guard = guardUntil > Date.now() ? guardCut : 0;
-		const def = Math.min(50, enchantMods(get()).def) / 100;
-		const dealt = Math.max(1, Math.round(dmg * (1 - Math.min(.6, guard)) * (1 - def)));
+		const levelDef = Math.min(0.62, Math.max(0, get().level - 1) * 0.0055);
+		const ench = Math.min(0.35, enchantMods(get()).def / 100);
+		const cut = Math.min(0.84, levelDef + ench);
+		const dealt = Math.max(1, Math.round(dmg * (1 - Math.min(.55, guard)) * (1 - cut)));
 		const hp = Math.max(0, get().hp - dealt);
 		set({
 			hp,
@@ -3423,7 +4238,15 @@ export const useRpg = create<RpgState>((set, get) => ({
 			if (staRecover <= 0 && !sprinting) liveSta = Math.min(s.staMax, liveSta + s.staMax * .04);
 		}
 		liveMana = Math.min(s.manaMax, liveMana + 5 * dt);
-		if (!s.down && liveHp < s.hpMax) liveHp = Math.min(s.hpMax, liveHp + (regenUntil > Date.now() ? 9 : 1.6) * dt);
+		if (!s.down && liveHp < s.hpMax) {
+			let worn = 0;
+			for (const it of Object.values(s.equipped)) if (it?.hp) worn += it.hp;
+			const gear = 1 + Math.min(1.35, worn / 55);
+			let rate = 2.6 * gear;
+			if (regenUntil > Date.now()) rate = Math.max(rate, 10);
+			if (reviveBoostUntil > Date.now()) rate *= 2.1;
+			liveHp = Math.min(s.hpMax, liveHp + rate * dt);
+		}
 		let hurt = s.hurt;
 		if (hurt > 0) hurt = Math.max(0, hurt - dt);
 		const listed = s.stall;

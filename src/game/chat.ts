@@ -11,6 +11,8 @@ let lines: ChatLine[] = [];
 let bubbles: Bubble[] = [];
 let whisper: Whisper = null;
 let focused = false;
+let revealUntil = 0;
+let mail: { id: string; nick: string }[] = [];
 let seq = 1;
 let sender: ((peerId: string | undefined, data: unknown) => void) | null = null;
 const listeners = new Set<() => void>();
@@ -32,6 +34,21 @@ export function chatSnapshot() {
 
 export function chatFocused() {
   return focused;
+}
+
+export function chatOpen() {
+  return focused || Date.now() < revealUntil;
+}
+
+export function mailSnapshot() {
+  return mail;
+}
+
+export function openMail(id: string) {
+  const row = mail.find((item) => item.id === id);
+  mail = mail.filter((item) => item.id !== id);
+  if (row) whisper = { id: row.id, nick: row.nick };
+  publish();
 }
 
 export function setChatFocus(next: boolean) {
@@ -58,7 +75,12 @@ export function bindChatSend(fn: (peerId: string | undefined, data: unknown) => 
 
 function pushLine(nick: string, text: string, isWhisper: boolean) {
   lines = [...lines, { id: seq++, nick, text, whisper: isWhisper }].slice(-40);
+  revealUntil = Date.now() + 7000;
   publish();
+}
+
+export function systemSay(text: string) {
+  pushLine("Sistem", text, false);
 }
 
 function pushBubble(key: string, nick: string, text: string) {
@@ -97,12 +119,10 @@ export function receiveChat(from: string, data: unknown) {
   if (isBlocked(from, nick)) return;
   const text = row.text.replace(/\s+/g, " ").trim().slice(0, 80);
   if (!text) return;
-  if (row.whisper && whisper?.id !== from) {
-    const mine = useRpg.getState().nick;
-    if (nick && nick !== mine && whisper?.id !== from) {
-      /* still show whispers addressed to us; the sender only targets us */
-    }
-  }
   pushLine(row.whisper ? `${nick} fısıldadı` : nick, text, Boolean(row.whisper));
   pushBubble(from, nick, text);
+  if (row.whisper) {
+    mail = [...mail.filter((item) => item.id !== from), { id: from, nick }].slice(-6);
+    publish();
+  }
 }

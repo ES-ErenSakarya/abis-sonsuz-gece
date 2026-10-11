@@ -22,11 +22,11 @@ export type MobCard = { name: string; hp: number; hpMax: number; level: number; 
 
 type Snap = { sel: Sel | null; duel: Duel; social: Social; friends: Mate[]; party: Mate[]; trade: TradeBoard; card: MobCard };
 
-export type TradeBoard = { mine: Item[]; theirs: Item[]; mineOk: boolean; theirsOk: boolean };
+export type TradeBoard = { mine: Item[]; theirs: Item[]; mineGold: number; theirGold: number; mineOk: boolean; theirsOk: boolean };
 
 const idleDuel: Duel = { phase: "idle", id: "", nick: "", level: 0 };
 const idleSocial: Social = { phase: "idle", act: "", id: "", nick: "" };
-const emptyBoard = (): TradeBoard => ({ mine: [], theirs: [], mineOk: false, theirsOk: false });
+const emptyBoard = (): TradeBoard => ({ mine: [], theirs: [], mineGold: 0, theirGold: 0, mineOk: false, theirsOk: false });
 let sel: Sel | null = null;
 let duel: Duel = idleDuel;
 let social: Social = idleSocial;
@@ -238,8 +238,7 @@ function acceptSocial(act: SocialAct, nick: string, id: string, level: number) {
   publish();
 }
 
-function giveBack(items: Item[]) {
-  if (!items.length) return;
+function giveBack(items: Item[], gold = 0) {
   const state = useRpg.getState();
   const bag = state.bag.slice();
   const leftover: Item[] = [];
@@ -248,7 +247,7 @@ function giveBack(items: Item[]) {
     if (hole >= 0) bag[hole] = item;
     else leftover.push(item);
   }
-  useRpg.setState({ bag });
+  useRpg.setState({ bag, gold: state.gold + Math.max(0, Math.floor(gold)) });
   if (leftover.length) leftover.forEach((item) => queueGroundDrop(item));
 }
 
@@ -256,6 +255,7 @@ function tryCommit() {
   if (social.phase !== "live" || social.act !== "trade") return;
   if (!board.mineOk || !board.theirsOk) return;
   const got = board.theirs.slice();
+  const gotGold = Math.max(0, Math.floor(board.theirGold || 0));
   board = emptyBoard();
   social = idleSocial;
   const state = useRpg.getState();
@@ -266,7 +266,7 @@ function tryCommit() {
     if (hole >= 0) bag[hole] = item;
     else leftover.push(item);
   }
-  useRpg.setState({ bag, toast: "Ticaret tamam" });
+  useRpg.setState({ bag, gold: state.gold + gotGold, toast: gotGold ? `Ticaret tamam · +${gotGold} altın` : "Ticaret tamam" });
   if (leftover.length) leftover.forEach((item) => queueGroundDrop(item));
   publish();
 }
@@ -282,9 +282,25 @@ export function addTradeItem(index: number) {
   }
   const bag = state.bag.slice();
   bag[index] = null;
-  board = { mine: [...board.mine, item], theirs: board.theirs, mineOk: false, theirsOk: false };
+  board = { mine: [...board.mine, item], theirs: board.theirs, mineGold: board.mineGold, theirGold: board.theirGold, mineOk: false, theirsOk: false };
   useRpg.setState({ bag });
-  sender?.(social.id, { kind: "social", act: "offer", items: board.mine, nick: state.nick, level: state.level });
+  sender?.(social.id, { kind: "social", act: "offer", items: board.mine, gold: board.mineGold, nick: state.nick, level: state.level });
+  publish();
+}
+
+export function offerTradeGold(amount: number) {
+  if (social.phase !== "live" || social.act !== "trade" || !social.id) return;
+  const want = Math.max(0, Math.floor(Number(amount) || 0));
+  const state = useRpg.getState();
+  const held = board.mineGold || 0;
+  const pool = state.gold + held;
+  if (want > pool) {
+    useRpg.setState({ toast: "Yeterli altın yok" });
+    return;
+  }
+  board = { ...board, mineGold: want, mineOk: false, theirsOk: false };
+  useRpg.setState({ gold: pool - want });
+  sender?.(social.id, { kind: "social", act: "offer", items: board.mine, gold: want, nick: state.nick, level: state.level });
   publish();
 }
 
@@ -311,7 +327,7 @@ export function sendTradeItem(index: number) {
 
 export function closeTrade() {
   if (social.phase === "idle") return;
-  if (social.act === "trade") giveBack(board.mine);
+  if (social.act === "trade") giveBack(board.mine, board.mineGold);
   board = emptyBoard();
   if (social.id) sender?.(social.id, { kind: "social", act: "end", what: social.act, nick: "", level: 1 });
   social = idleSocial;
@@ -356,7 +372,8 @@ function receiveSocial(from: string, row: Record<string, unknown>) {
   }
   if (row.act === "offer" && social.phase === "live" && social.id === from) {
     const items = Array.isArray(row.items) ? row.items.map((entry) => takeItem(entry)).filter((entry): entry is Item => entry != null) : [];
-    board = { ...board, theirs: items, mineOk: false, theirsOk: false };
+    const gold = Math.max(0, Math.floor(Number(row.gold) || 0));
+    board = { ...board, theirs: items, theirGold: gold, mineOk: false, theirsOk: false };
     publish();
     return;
   }
@@ -387,7 +404,7 @@ function receiveSocial(from: string, row: Record<string, unknown>) {
     return;
   }
   if ((row.act === "no" || row.act === "end") && social.id === from && social.phase !== "idle") {
-    if (social.act === "trade") giveBack(board.mine);
+    if (social.act === "trade") giveBack(board.mine, board.mineGold);
     board = emptyBoard();
     social = idleSocial;
     useRpg.setState({ toast: row.act === "no" ? "Teklif reddedildi" : "Ticaret kapandı" });
@@ -408,7 +425,8 @@ export function receiveDuel(from: string, data: unknown) {
     useRpg.setState({ toast: dead ? "Düelloyu kaybettin" : `-${dmg}` });
     if (dead) {
       useRpg.setState({ hp: useRpg.getState().hpMax * 0.45, toast: "Düelloyu kaybettin" });
-      sender?.(from, packet("end", nick, level));
+      const who = useRpg.getState();
+      sender?.(from, packet("end", who.nick, who.level, { fallen: true }));
       duel = idleDuel;
       publish();
     }
@@ -441,9 +459,10 @@ export function receiveDuel(from: string, data: unknown) {
   }
   if ((act === "no" || act === "end") && duel.id === from && duel.phase !== "idle") {
     const rejected = act === "no" && duel.phase === "sent";
-    const lost = act === "end" && duel.phase === "live";
+    const won = act === "end" && duel.phase === "live" && row.fallen === true;
     duel = idleDuel;
-    useRpg.setState({ toast: rejected ? "Düello reddedildi" : lost ? "Düello bitti" : "Düello bitti" });
+    if (won) useRpg.getState().noteDuelWin();
+    useRpg.setState({ toast: rejected ? "Düello reddedildi" : won ? "Düelloyu kazandın" : "Düello bitti" });
     publish();
   }
 }
