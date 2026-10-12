@@ -322,9 +322,9 @@ export function bridgeDeckY(along: number) {
   return lo + ((hi - lo) * (SPAN_OUT - a)) / (SPAN_OUT - RISE_OUT);
 }
 
-export function groundY(x: number, z: number) {
+export function groundY(x: number, z: number, lift = false) {
   const floor = arenaFloor();
-  if (floor && Math.hypot(x - floor.x, z - floor.z) <= floor.r + 0.35) return floor.y;
+  if (lift && floor && Math.hypot(x - floor.x, z - floor.z) <= floor.r + 0.35) return floor.y;
   if (onPier(x, z)) return PIER_TOP + pierLift;
   const h = heightFn ? heightFn(x, z) : 0;
   if (Math.hypot(x - LAKE.x, z - LAKE.z) < LAKE.r - 0.15) return Math.max(h, 0.07);
@@ -525,6 +525,77 @@ export const VEINS = [
   { x: -470, z: -78 },
 ];
 
+export type OreKind = "demir" | "bakir" | "gumus" | "altin";
+export type LiveVein = { id: string; x: number; z: number; ore: OreKind; realm: string };
+const ORE_CYCLE: OreKind[] = ["demir", "bakir", "gumus", "altin"];
+let veinLive: LiveVein[] | null = null;
+
+export function liveVeins(): LiveVein[] {
+  if (veinLive) return veinLive;
+  veinLive = VEINS.map((spot, index) => {
+    let realm = "koy";
+    let best = Infinity;
+    for (const row of REALMS) {
+      const d = Math.hypot(spot.x - row.x, spot.z - row.z);
+      if (d < best) {
+        best = d;
+        realm = row.id;
+      }
+    }
+    return { id: String(index), x: spot.x, z: spot.z, ore: ORE_CYCLE[index % ORE_CYCLE.length]!, realm };
+  });
+  return veinLive;
+}
+
+export function veinAt(x: number, z: number) {
+  return liveVeins().find((row) => Math.hypot(row.x - x, row.z - z) < 1.6) ?? null;
+}
+
+export function retireVein(x: number, z: number) {
+  const vein = veinAt(x, z);
+  if (!vein) return;
+  const realm = REALMS.find((row) => row.id === vein.realm) ?? REALMS[0];
+  for (let n = 0; n < 28; n++) {
+    const ang = Math.random() * Math.PI * 2;
+    const rad = 36 + Math.random() * (realm.id === "koy" ? 100 : 78);
+    const nx = realm.x + Math.cos(ang) * rad;
+    const nz = realm.z + Math.sin(ang) * rad;
+    if (Math.hypot(nx - realm.x, nz - realm.z) < 16) continue;
+    if (!dryLand(nx, nz, 1.1)) continue;
+    if (liveVeins().some((row) => row.id !== vein.id && Math.hypot(row.x - nx, row.z - nz) < 12)) continue;
+    vein.x = nx;
+    vein.z = nz;
+    return;
+  }
+}
+
+export type MeteorSpot = { id: string; level: number; x: number; z: number; realm: string };
+const METEOR_TABLE: { realm: (typeof REALMS)[number]["id"]; levels: number[] }[] = [
+  { realm: "koy", levels: [5, 10, 15] },
+  { realm: "koy2", levels: [20, 25, 30] },
+  { realm: "dolunay", levels: [35, 40, 45] },
+  { realm: "ay", levels: [55, 65, 75, 85, 90] },
+];
+
+export function meteorSpots(): MeteorSpot[] {
+  const out: MeteorSpot[] = [];
+  for (const row of METEOR_TABLE) {
+    const home = REALMS.find((item) => item.id === row.realm) ?? REALMS[0];
+    row.levels.forEach((level, index) => {
+      const ang = (index + 0.35) * ((Math.PI * 2) / row.levels.length) + 0.55;
+      const rad = home.id === "koy" ? 128 : 96;
+      out.push({
+        id: `meteor-${row.realm}-${level}`,
+        level,
+        realm: row.realm,
+        x: home.x + Math.cos(ang) * rad,
+        z: home.z + Math.sin(ang) * rad,
+      });
+    });
+  }
+  return out;
+}
+
 export const REALMS = [
   { id: "koy", name: "Ana Köy", x: 0, z: 0, min: 1, max: 10 },
   { id: "koy2", name: "İkinci Köy", x: 0, z: 420, min: 10, max: 25 },
@@ -587,19 +658,40 @@ export type CampSpawn = {
 };
 
 export function campSpawns(): CampSpawn[] {
+  const doors = [
+    { x: 118, z: 46 },
+    { x: -110, z: 58 },
+    { x: 34, z: 468 },
+    { x: -38, z: 388 },
+    { x: 470, z: 34 },
+    { x: 388, z: -32 },
+    { x: -470, z: 28 },
+    { x: -384, z: -36 },
+  ];
   return CAMP_LAYOUT.flatMap((row, index) =>
     [0, 1, 2, 3, 4].map((n) => {
       const home = REALMS.find((item) => item.id === row.realm) ?? REALMS[0];
       const band = row.realm === "koy" ? 102 + (n % 3) * 20 : 46 + (n % 3) * 28;
       const angle = row.a + (n - 2) * 0.1;
+      let x = home.x + Math.cos(angle) * band;
+      let z = home.z + Math.sin(angle) * band;
+      for (const door of doors) {
+        const dx = x - door.x;
+        const dz = z - door.z;
+        const dist = Math.hypot(dx, dz) || 1;
+        if (dist < 18) {
+          x = door.x + (dx / dist) * 20;
+          z = door.z + (dz / dist) * 20;
+        }
+      }
       return {
         id: `${row.id}-${n}`,
         specId: row.id,
         level: row.level,
         realm: row.realm,
         pack: index,
-        x: home.x + Math.cos(angle) * band,
-        z: home.z + Math.sin(angle) * band,
+        x,
+        z,
       };
     }),
   );

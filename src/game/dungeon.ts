@@ -40,3 +40,16 @@ export function endRun() {
   floor = null;
   publish();
 }
+
+let enterFn: ((id: string) => void) | null = null;
+
+export function bindDungeonEnter(fn: (id: string) => void) {
+  enterFn = fn;
+  return () => {
+    if (enterFn === fn) enterFn = null;
+  };
+}
+
+export function requestDungeon(id: string) {
+  enterFn?.(id);
+}

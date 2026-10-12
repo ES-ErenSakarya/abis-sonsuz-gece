@@ -628,9 +628,17 @@ export function buildVillage(textures) {
 	well.add(outer, inner, floor, water, lip, postL, postR, beam, littleRoof);
 	trackProp({ id: "well", label: "Kuyu", kind: "bina", object: well, base: { x: 0, y: 0, z: 0, yaw: 0 }, well: true });
 	root.add(well);
-	const oreMat = keep(new THREE.MeshStandardMaterial({ color: "#6e624c", roughness: 0.9 }));
+	const ORE_COLOR = ["#3c4148", "#b87333", "#d9dde3", "#d4af37"];
 	VEINS.forEach((vein, index) => {
+		const oreMat = keep(new THREE.MeshStandardMaterial({
+			color: ORE_COLOR[index % 4],
+			roughness: index % 4 === 3 ? 0.32 : 0.48,
+			metalness: 0.62,
+			emissive: ORE_COLOR[index % 4],
+			emissiveIntensity: index % 4 === 0 ? 0.04 : 0.12,
+		}));
 		const rock = new THREE.Mesh(keep(new THREE.DodecahedronGeometry(0.55, 0)), oreMat);
+		rock.name = `vein-rock-${index}`;
 		const gy = groundY(vein.x, vein.z);
 		rock.position.set(vein.x, gy + 0.28, vein.z);
 		rock.castShadow = true;

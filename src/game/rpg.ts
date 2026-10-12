@@ -1,8 +1,10 @@
 // @ts-nocheck
 import { create } from "zustand";
 import { readSim, queueHop } from "@/game/input";
-import { REALMS, FISHER_STAND, campSpawns, realmAt, realmGate, realmHerald } from "@/game/world";
+import { REALMS, FISHER_STAND, campSpawns, realmAt, realmGate, realmHerald, retireVein, veinAt } from "@/game/world";
 import { priceOf, studioGrave, studioSafe } from "@/game/studio";
+import { systemSay } from "@/game/chat";
+import { friendMates, hydrateFriends } from "@/game/target";
 
 export const PAGE_SIZE = 24;
 export const BAG_PAGES = 4;
@@ -15,7 +17,7 @@ export type EquipSlot = "weapon" | "helmet" | "armor" | "earring" | "necklace" |
 export type WeaponStyle = "fist" | "sword" | "bow" | "staff" | "dagger" | "pala" | "kazma" | "olta";
 export type CharTab = "stats" | "skills" | "quests";
 export type ShopKind = "weapon" | "armor" | "market" | "stable" | "fisher" | "miner" | "smith" | "depot" | "guard" | "herald" | "gate" | "stall" | "craft" | "bazaar";
-export type NearKind = "mentor" | "smith" | "guard" | "market" | "armor" | "weapon" | "depot" | "stable" | "fisher" | "miner" | "well" | "fish" | "vein" | "herald" | "gate" | "craft" | "stall";
+export type NearKind = "mentor" | "smith" | "guard" | "market" | "armor" | "weapon" | "depot" | "stable" | "fisher" | "miner" | "well" | "fish" | "vein" | "herald" | "gate" | "craft" | "stall" | "boss";
 
 export type Item = {
   uid: string;
@@ -37,6 +39,7 @@ export type Item = {
   req?: number;
   forClass?: string;
   enchants?: { name: string; stat: string; value: number; boss?: string }[];
+  loot?: Item[];
 };
 
 export type Quest = {
@@ -99,6 +102,10 @@ export type CharacterSave = {
   bossKills?: number;
   duelWins?: number;
   goldEarned?: number;
+  skillBank?: number;
+  filledGear?: string[];
+  weekClaim?: string;
+  friends?: { id: string; nick: string; level: number }[];
 };
 
 export const SLOT_LABEL = {
@@ -658,8 +665,8 @@ export function classLine(slot, forClass) {
 	return named[forClass] || "Bütün Karakterler Kuşanabilir";
 }
 export function openBagCount(stage) {
-	const n = Math.max(0, Math.min(4, Math.floor(Number(stage) || 0)));
-	return Math.min(BAG_SIZE, 24 + n * 18);
+	const n = Math.max(0, Math.min(8, Math.floor(Number(stage) || 0)));
+	return Math.min(BAG_SIZE, 24 + n * 9);
 }
 export function rankOf(score) {
 	const n = Math.max(0, Math.floor(Number(score) || 0));
@@ -884,30 +891,86 @@ var SHOP = [
 		shop: "armor"
 	},
 	{
-		id: "pot-hp",
-		name: "Can İksiri",
+		id: "pot-hp-s",
+		name: "Can İksiri S",
 		slot: "belt",
-		price: 18,
+		price: 12,
 		str: 0,
-		hp: 0,
+		hp: 50,
 		ats: 0,
 		mvs: 0,
 		ctp: 0,
-		desc: "Canın beşte ikisini doldurur. Yığın 200.",
+		desc: "Can +50.",
 		shop: "market",
 		kind: "potion"
 	},
 	{
-		id: "pot-mp",
-		name: "Mana İksiri",
+		id: "pot-hp-m",
+		name: "Can İksiri M",
 		slot: "belt",
-		price: 18,
+		price: 28,
+		str: 0,
+		hp: 100,
+		ats: 0,
+		mvs: 0,
+		ctp: 0,
+		desc: "Can +100.",
+		shop: "market",
+		kind: "potion"
+	},
+	{
+		id: "pot-hp-l",
+		name: "Can İksiri L",
+		slot: "belt",
+		price: 55,
+		str: 0,
+		hp: 200,
+		ats: 0,
+		mvs: 0,
+		ctp: 0,
+		desc: "Can +200.",
+		shop: "market",
+		kind: "potion"
+	},
+	{
+		id: "pot-mp-s",
+		name: "Mana İksiri S",
+		slot: "belt",
+		price: 12,
 		str: 0,
 		hp: 0,
 		ats: 0,
 		mvs: 0,
 		ctp: 0,
-		desc: "Mananın beşte ikisini doldurur.",
+		desc: "Mana +50.",
+		shop: "market",
+		kind: "potion"
+	},
+	{
+		id: "pot-mp-m",
+		name: "Mana İksiri M",
+		slot: "belt",
+		price: 28,
+		str: 0,
+		hp: 0,
+		ats: 0,
+		mvs: 0,
+		ctp: 0,
+		desc: "Mana +100.",
+		shop: "market",
+		kind: "potion"
+	},
+	{
+		id: "pot-mp-l",
+		name: "Mana İksiri L",
+		slot: "belt",
+		price: 55,
+		str: 0,
+		hp: 0,
+		ats: 0,
+		mvs: 0,
+		ctp: 0,
+		desc: "Mana +200.",
 		shop: "market",
 		kind: "potion"
 	},
@@ -949,7 +1012,7 @@ var SHOP = [
 		ats: 0,
 		mvs: 0,
 		ctp: 0,
-		desc: "Envantere sürükle. Önce 2. pencere, o dolunca 3.",
+		desc: "Envantere sürükle veya çift tıkla. 9 yuva açar.",
 		shop: "market",
 		kind: "bag"
 	},
@@ -1359,7 +1422,17 @@ export const QUEST_BOARD = [
 	{ id: "q-bat", track: "av", map: "ay", kind: "kill", mob: "bat", name: "Gece Yarasa", need: 11, min: 50, xp: 780, gold: 270, reward: "" },
 	{ id: "q-wraith", track: "av", map: "ay", kind: "kill", mob: "wraith", name: "Buz Ruhu", need: 7, min: 54, xp: 860, gold: 300, reward: "" },
 	{ id: "q-muhafiz", track: "av", map: "ay", kind: "kill", mob: "muhafiz", name: "Golem Muhafız", need: 1, min: 56, xp: 980, gold: 360, reward: "" },
-	{ id: "q-lord", track: "av", map: "ay", kind: "kill", mob: "lord", name: "Ruh Lordu", need: 1, min: 58, xp: 1100, gold: 420, reward: "" },
+	{ id: "q-lord", track: "av", map: "ay", kind: "kill", mob: "lord", name: "Ruh Lordu", need: 1, min: 58, xp: 420, gold: 180, reward: "" },
+	{ id: "q-60", track: "ana", map: "ay", kind: "kill", mob: "wraith", name: "Ayın Sonu", need: 16, min: 60, xp: 520, gold: 220, reward: "" },
+	{ id: "q-64", track: "ana", map: "ay", kind: "kill", mob: "golem", name: "Taş Duvar", need: 12, min: 64, xp: 560, gold: 240, reward: "" },
+	{ id: "q-68", track: "ana", map: "ay", kind: "kill", mob: "bandit", name: "Harabe Temizliği", need: 18, min: 68, xp: 600, gold: 260, reward: "" },
+	{ id: "q-72", track: "ana", map: "dolunay", kind: "kill", mob: "ayi", name: "Ayı Reisi Yeniden", need: 1, min: 72, xp: 480, gold: 280, reward: "" },
+	{ id: "q-76", track: "ana", map: "dolunay", kind: "kill", mob: "komutan", name: "Komutanın Dönüşü", need: 1, min: 76, xp: 520, gold: 300, reward: "" },
+	{ id: "q-80", track: "ana", map: "ay", kind: "kill", mob: "muhafiz", name: "Muhafız Kapısı", need: 1, min: 80, xp: 560, gold: 340, reward: "" },
+	{ id: "q-84", track: "ana", map: "ay", kind: "kill", mob: "bat", name: "Yarasa Sürüsü", need: 20, min: 84, xp: 640, gold: 360, reward: "" },
+	{ id: "q-88", track: "ana", map: "ay", kind: "kill", mob: "lord", name: "Lordun Gölgesi", need: 1, min: 88, xp: 620, gold: 400, reward: "" },
+	{ id: "q-92", track: "ana", map: "koy2", kind: "kill", mob: "kral", name: "Domuz Kralın İzi", need: 1, min: 92, xp: 500, gold: 380, reward: "" },
+	{ id: "q-96", track: "ana", map: "ay", kind: "kill", mob: "wraith", name: "Sonsuz Ay", need: 24, min: 96, xp: 700, gold: 460, reward: "" },
 	{ id: "y-fish", track: "yan", map: "koy", kind: "fish", name: "İlk Av", need: 3, min: 5, xp: 90, gold: 30, reward: "" },
 	{ id: "y-mine", track: "yan", map: "koy", kind: "mine", name: "İlk Damarı", need: 6, min: 8, xp: 110, gold: 40, reward: "" },
 	{ id: "y-sell", track: "yan", map: "koy", kind: "sell", name: "Fazlayı Sat", need: 1, min: 3, xp: 40, gold: 10, reward: "" },
@@ -1668,6 +1741,12 @@ function rollDropEnchants(slot) {
 	}
 	return list;
 }
+function tidyItem(item) {
+	if (!item) return item;
+	const next = item.id === "kazma" ? { ...item, level: 8, req: 8 } : item;
+	if (Array.isArray(next.enchants)) next.enchants = dedupeEnchants(next.enchants);
+	return next;
+}
 function matDrop(level) {
 	const slots = ["weapon", "armor", "helmet", "belt", "boots", "gloves", "ring", "necklace", "earring", "bracelet"];
 	const slot = slots[Math.floor(Math.random() * slots.length)];
@@ -1733,24 +1812,73 @@ function attachSmith(bag, item, stone, mat) {
 	}
 	return { smithStone: nextStone, smithMat: nextMat };
 }
-export function rollKillLoot(level, boss): Item[] {
+function dedupeEnchants(list) {
+	const seen = new Set();
 	const out = [];
-	if (Math.random() < (boss ? 0.28 : 0.07)) out.push(gearDrop(level));
-	if (Math.random() < (boss ? 0.72 : 0.38)) out.push(matDrop(level));
-	if (boss && Math.random() < 0.4) out.push(matDrop(level));
-	if (Math.random() < (boss ? 0.16 : 0.045)) {
-		const pot = catalogItem("pot-hp");
+	for (const row of list || []) {
+		const key = `${row.stat}:${row.boss || ""}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		out.push(row);
+	}
+	return out;
+}
+function potTier(id) {
+	const key = String(id || "");
+	if (key.endsWith("-l")) return 200;
+	if (key.endsWith("-m")) return 100;
+	if (key === "pot-hp" || key === "pot-mp") return 50;
+	return 50;
+}
+function rollPot(kind) {
+	const roll = Math.random();
+	const tier = roll < 0.62 ? "s" : roll < 0.9 ? "m" : "l";
+	return catalogItem(`pot-${kind}-${tier}`);
+}
+export function rollKillLoot(level, boss, playerLevel = level) {
+	const gap = Math.max(0, Math.floor(playerLevel || level) - Math.floor(level));
+	const near = Math.pow(0.62, Math.min(16, gap));
+	const out = [];
+	if (Math.random() < (boss ? 0.1 : 0.014) * near) out.push(gearDrop(level));
+	if (Math.random() < (boss ? 0.07 : 0.01) * Math.max(0.12, near)) {
+		const pot = rollPot(Math.random() < 0.5 ? "hp" : "mp");
 		if (pot) out.push(pot);
 	}
-	if (Math.random() < (boss ? 0.16 : 0.045)) {
-		const pot = catalogItem("pot-mp");
-		if (pot) out.push(pot);
-	}
-	if (Math.random() < (boss ? 0.2 : 0.07)) {
+	return out;
+}
+export function meteorLoot(level) {
+	const out = [];
+	out.push(matDrop(level));
+	if (Math.random() < 0.45) out.push(matDrop(level));
+	if (Math.random() < 0.22) out.push(gearDrop(level));
+	if (Math.random() < 0.01) {
 		const stone = catalogItem("guc-tasi");
 		if (stone) out.push(stone);
 	}
 	return out;
+}
+export function bossChestItem(name, level) {
+	const loot = [];
+	loot.push(gearDrop(level));
+	if (Math.random() < 0.4) loot.push(gearDrop(Math.max(1, level - 2)));
+	const pot = rollPot(Math.random() < 0.5 ? "hp" : "mp");
+	if (pot) loot.push(pot);
+	return {
+		uid: uid(),
+		id: "boss-sandik",
+		name: `${name} Sandığı`,
+		slot: "belt",
+		level: 1,
+		plus: 0,
+		str: 0,
+		hp: 0,
+		ats: 0,
+		mvs: 0,
+		ctp: 0,
+		desc: "Çift tıkla. İçindeki eşyalar envantere dökülür.",
+		kind: "chest",
+		loot
+	};
 }
 export function dropTable(level) {
 	return [
@@ -1759,6 +1887,25 @@ export function dropTable(level) {
 		"Parçaya özel yükseltme taşı (seyrek)",
 		"+0 ile +3 ve seyrek efsun"
 	];
+}
+export function claimWeekly(place) {
+	const now = new Date();
+	if (now.getDay() !== 1) return;
+	const start = new Date(now.getFullYear(), 0, 1);
+	const week = Math.ceil(((now - start) / 86400000 + start.getDay() + 1) / 7);
+	const key = `${now.getFullYear()}-W${week}`;
+	const s = useRpg.getState();
+	if (s.weekClaim === key) return;
+	if (place < 1 || place > 3) return;
+	const plus = place === 1 ? 10 : place === 2 ? 6 : 3;
+	const gold = place === 1 ? 10000 : place === 2 ? 7000 : 5000;
+	const names = ["Haftanın Kılıcı", "Haftanın Zırhı", "Haftanın Miğferi"];
+	const item = rewardItem(names[place - 1], plus);
+	item.plus = plus;
+	item.level = Math.max(item.level, s.level);
+	const ok = tryReceiveItem(item);
+	useRpg.getState().addGold(gold);
+	useRpg.setState({ weekClaim: key, toast: ok ? `Haftalık ödül: +${plus} eşya ve ${gold} altın` : `Haftalık ${gold} altın. Eşya sığmadı.` });
 }
 export function saleGold(it) {
 	if (!it) return 0;
@@ -1772,6 +1919,16 @@ export function tryReceiveItem(item) {
 	const bag = s.bag.slice();
 	const limit = openBagCount(s.bagStage);
 	const stackable = item.kind === "mat" || item.kind === "potion" || item.kind === "fish" || item.id === "yem" || item.id === "guc-tasi";
+	if (item.kind === "potion" && (String(item.id).startsWith("pot-hp") || String(item.id).startsWith("pot-mp"))) {
+		const key = String(item.id).startsWith("pot-mp") ? "mp" : "hp";
+		const belt = s.pots?.[key];
+		if (belt && belt.id === item.id && (belt.count ?? 1) < 200) {
+			const count = Math.min(200, (belt.count ?? 1) + (item.count ?? 1));
+			useRpg.setState({ pots: { ...s.pots, [key]: { ...belt, count } } });
+			systemSay(`${item.name} iksir yuvasına eklendi`);
+			return true;
+		}
+	}
 	if (stackable) {
 		const stack = bag.findIndex((slot, i) => i < limit && slot?.id === item.id && (slot.count ?? 1) < 200);
 		if (stack >= 0) {
@@ -1779,7 +1936,8 @@ export function tryReceiveItem(item) {
 			const add = item.count ?? 1;
 			if (have + add <= 200) {
 				bag[stack] = { ...bag[stack], count: have + add };
-				useRpg.setState({ bag, toast: `${item.name} alındı` });
+				useRpg.setState({ bag });
+				systemSay(`${item.name} x${add}`);
 				return true;
 			}
 		}
@@ -1790,7 +1948,8 @@ export function tryReceiveItem(item) {
 		return false;
 	}
 	bag[hole] = item;
-	useRpg.setState({ bag, toast: `${item.name} alındı` });
+	useRpg.setState({ bag });
+	systemSay(`${item.name} alındı`);
 	return true;
 }
 export function bagRoom(item?: { id?: string; kind?: string; count?: number } | null) {
@@ -2020,6 +2179,10 @@ export function captureSave() {
 		bossKills: s.bossKills,
 		duelWins: s.duelWins,
 		goldEarned: s.goldEarned,
+		skillBank: s.skillBank || 0,
+		filledGear: s.filledGear || [],
+		weekClaim: s.weekClaim || "",
+		friends: friendMates(),
 		x: here.x,
 		z: here.z
 	};
@@ -2127,6 +2290,29 @@ function cloneShop(def) {
 		forClass: def.forClass
 	};
 }
+function rememberFill(prev, next) {
+	const seen = new Set(next.filledGear || []);
+	let fillHp = false;
+	let fillMana = false;
+	for (const slot of Object.keys(next.equipped || {})) {
+		const it = next.equipped[slot];
+		const old = prev.equipped?.[slot];
+		if (!it || it.uid === old?.uid) continue;
+		if (seen.has(it.uid)) continue;
+		seen.add(it.uid);
+		if ((it.hp || 0) > 0 || (it.enchants || []).some((row) => row.stat === "hp")) fillHp = true;
+		if ((it.enchants || []).some((row) => row.stat === "mana")) fillMana = true;
+	}
+	next.filledGear = [...seen];
+	if (fillHp && next.hpMax > (prev.hpMax || 0) + 0.5) {
+		next.hp = next.hpMax;
+		liveHp = next.hp;
+	}
+	if (fillMana && next.manaMax > (prev.manaMax || 0) + 0.5) {
+		next.mana = next.manaMax;
+		liveMana = next.mana;
+	}
+}
 function applyVitals(s, fill) {
 	const t = totalsOf(s);
 	s.hpMax = 100 + t.hp + enchantMods(s).hp;
@@ -2199,14 +2385,12 @@ export function applySave(save) {
 	const bag = withStarterChest(Array.from({ length: BAG_SIZE }, (_, i) => save.bag[i] ?? null), classId, {
 		...blankEquip(),
 		...save.equipped
-	}).map((item) => item?.id === "kazma" ? { ...item, level: 8, req: 8 } : item);
+	}).map((item) => tidyItem(item));
 	const equipped = {
 		...blankEquip(),
 		...save.equipped
 	};
-	for (const key of Object.keys(equipped)) {
-		if (equipped[key]?.id === "kazma") equipped[key] = { ...equipped[key], level: 8, req: 8 };
-	}
+	for (const key of Object.keys(equipped)) equipped[key] = tidyItem(equipped[key]);
 	const skills = { ...save.skills ?? {} };
 	let quests = normalizeQuests(Array.isArray(save.quests) ? save.quests : []).filter((quest) => !String(quest.id).startsWith("q-lv-"));
 	if ((save.level ?? 1) < 70) quests = quests.filter((quest) => quest.id !== "y-plus10" || quest.claimed);
@@ -2256,6 +2440,10 @@ export function applySave(save) {
 		bossKills: Math.max(0, Math.floor(Number(save.bossKills) || 0)),
 		duelWins: Math.max(0, Math.floor(Number(save.duelWins) || 0)),
 		goldEarned: Math.max(0, Math.floor(Number(save.goldEarned) || 0)),
+		skillBank: Math.max(0, Math.floor(Number(save.skillBank) || 0)),
+		filledGear: Array.isArray(save.filledGear) ? save.filledGear.filter((id) => typeof id === "string") : [],
+		weekClaim: typeof save.weekClaim === "string" ? save.weekClaim : "",
+		bossPrompt: null,
 		down: null,
 		mapLoad: "",
 		gearRev: s.gearRev + 1,
@@ -2279,6 +2467,7 @@ export function applySave(save) {
 	}
 	if (next.mountItem?.coatId && !next.steed) next.steed = horseCoat(next.mountItem.coatId);
 	useRpg.setState(next);
+	hydrateFriends(Array.isArray(save.friends) ? save.friends.filter((row) => row && typeof row.nick === "string" && typeof row.id === "string") : []);
 	ensureQuest(useRpg.getState, useRpg.setState);
 }
 export type ToolChore =
@@ -2335,6 +2524,10 @@ export interface RpgState {
   bossKills: number;
   duelWins: number;
   goldEarned: number;
+  skillBank: number;
+  filledGear: string[];
+  weekClaim: string;
+  bossPrompt: string | null;
   npcAsk: NearKind | null;
   boardFor: NearKind | null;
   boardMap: string | null;
@@ -2386,6 +2579,7 @@ export interface RpgState {
   deposit: (index: number) => void;
   withdraw: (index: number) => void;
   moveToPage: (from: number, page: number) => void;
+  splitStack: (index: number, count: number) => void;
   useBagItem: (index: number) => void;
   imbue: (from: number, to: number) => void;
   listStall: (index: number, price: number) => void;
@@ -2416,10 +2610,12 @@ export interface RpgState {
 
 const MINE_AT = [10 / 3, 20 / 3, 10];
 const ORES = [
-	{ id: "demir-cevher", name: "Demir Cevheri", desc: "Güç taşı eritmek için maden." },
-	{ id: "bakir-cevher", name: "Bakır Cevheri", desc: "Güç taşı eritmek için maden." },
-	{ id: "gumus-cevher", name: "Gümüş Cevheri", desc: "Güç taşı eritmek için maden." }
+	{ id: "demir-cevher", name: "Demir Cevheri", desc: "Yalnız demir damarından çıkar." },
+	{ id: "bakir-cevher", name: "Bakır Cevheri", desc: "Yalnız bakır damarından çıkar." },
+	{ id: "gumus-cevher", name: "Gümüş Cevheri", desc: "Yalnız gümüş damarından çıkar." },
+	{ id: "altin-cevher", name: "Altın Cevheri", desc: "Yalnız altın damarından çıkar." }
 ];
+const ORE_BY = { demir: ORES[0], bakir: ORES[1], gumus: ORES[2], altin: ORES[3] };
 const FISHES = [
 	{ id: "balik-gol", name: "Göl Balığı", desc: "Sakin sudan çıktı." },
 	{ id: "balik-sazan", name: "Sazan", desc: "Dipte dolaşan sazan." },
@@ -2489,7 +2685,8 @@ function stepChore(get, set, dt) {
 		let bag = s.bag;
 		let toast = "";
 		while (given < 3 && t >= MINE_AT[given]) {
-			const ore = ORES[Math.floor(Math.random() * ORES.length)];
+			const spot = s.vein ? veinAt(s.vein.x, s.vein.z) : null;
+			const ore = (spot && ORE_BY[spot.ore]) || ORES[0];
 			const next = bag.slice();
 			if (!pushMat(next, s.bagStage, ore)) {
 				set({ bag, chore: null, toast: "Çanta dolu", mines: s.mines + mined });
@@ -2498,11 +2695,12 @@ function stepChore(get, set, dt) {
 			bag = next;
 			given += 1;
 			mined += 1;
-			toast = given >= 3 ? `${ore.name} · 3 maden çıktı` : `${ore.name} · ${given}/3`;
+			toast = given >= 3 ? `${ore.name} · damar tükendi` : `${ore.name} · ${given}/3`;
 			bumpQuest(get, set, "mine");
 		}
 		if (given >= 3 || t >= 10) {
-			set({ bag, chore: null, toast: toast || "Damar boşaldı", mines: s.mines + mined });
+			if (s.vein && given >= 3) retireVein(s.vein.x, s.vein.z);
+			set({ bag, chore: null, vein: null, toast: toast || "Damar boşaldı", mines: s.mines + mined });
 			return;
 		}
 		if (bag !== s.bag) set({ bag, chore: { kind: "mine", t, given }, toast, mines: s.mines + mined });
@@ -2619,6 +2817,10 @@ export const useRpg = create<RpgState>((set, get) => ({
 	bossKills: 0,
 	duelWins: 0,
 	goldEarned: 0,
+	skillBank: 0,
+	filledGear: [],
+	weekClaim: "",
+	bossPrompt: null,
 	npcAsk: null,
 	boardFor: null,
 	boardMap: null,
@@ -2658,7 +2860,8 @@ export const useRpg = create<RpgState>((set, get) => ({
 		shop: null,
 		boardFor: null,
 		boardMap: null,
-		npcAsk: null
+		npcAsk: null,
+		bossPrompt: null
 	})),
 	closeShop: () => set((s) => ({
 		...releaseSmith(s),
@@ -2993,6 +3196,26 @@ export const useRpg = create<RpgState>((set, get) => ({
 			npcAsk: null,
 		});
 	},
+	splitStack: (index, count) => {
+		const s = get();
+		const it = s.bag[index];
+		const have = it?.count ?? 1;
+		const n = Math.floor(Number(count) || 0);
+		if (!it || n < 1 || n >= have) {
+			set({ toast: "Bölünecek adet geçersiz" });
+			return;
+		}
+		const bag = s.bag.slice();
+		const limit = openBagCount(s.bagStage);
+		const hole = bag.findIndex((slot, i) => i < limit && slot == null);
+		if (hole < 0) {
+			set({ toast: "Envanterinde yer yok" });
+			return;
+		}
+		bag[index] = { ...it, count: have - n };
+		bag[hole] = { ...it, uid: uid(), count: n };
+		set({ bag, toast: `${it.name} ${n} adet ayrıldı` });
+	},
 	useBagItem: (index) => {
 		const s = get();
 		const it = s.bag[index];
@@ -3010,7 +3233,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 			return;
 		}
 		if (it.id === "bag-expand") {
-			if (s.bagStage >= 4) {
+			if (s.bagStage >= 8) {
 				set({ toast: "Envanter sonuna kadar açık" });
 				return;
 			}
@@ -3018,37 +3241,32 @@ export const useRpg = create<RpgState>((set, get) => ({
 			set({
 				bag,
 				bagStage: s.bagStage + 1,
-				toast: s.bagStage % 2 === 0 ? "Pencerenin yarısı açıldı" : "Pencere tamamlandı"
+				toast: "9 yuva açıldı"
 			});
 			return;
 		}
 		if (it.kind === "potion") {
-			if (it.id === "pot-hp" && s.hp >= s.hpMax - 0.4) {
+			const heal = potTier(it.id);
+			const hpPot = String(it.id).startsWith("pot-hp");
+			const mpPot = String(it.id).startsWith("pot-mp");
+			if (hpPot && s.hp >= s.hpMax - 0.4) {
 				set({ toast: "Canın zaten dolu" });
 				return;
 			}
-			if (it.id === "pot-mp" && s.mana >= s.manaMax - 0.4) {
+			if (mpPot && s.mana >= s.manaMax - 0.4) {
 				set({ toast: "Manan zaten dolu" });
 				return;
 			}
 			spend();
 			const now = Date.now();
-			if (it.id === "pot-hp") {
-				const hp = Math.min(s.hpMax, s.hp + s.hpMax * .4);
+			if (hpPot) {
+				const hp = Math.min(s.hpMax, s.hp + heal);
 				liveHp = hp;
-				set({
-					bag,
-					hp,
-					toast: "Can iksiri"
-				});
-			} else if (it.id === "pot-mp") {
-				const mana = Math.min(s.manaMax, s.mana + s.manaMax * .4);
+				set({ bag, hp, toast: it.name });
+			} else if (mpPot) {
+				const mana = Math.min(s.manaMax, s.mana + heal);
 				liveMana = mana;
-				set({
-					bag,
-					mana,
-					toast: "Mana iksiri"
-				});
+				set({ bag, mana, toast: it.name });
 			} else if (it.id === "pot-mvs") set({
 				bag,
 				swiftUntil: now + 6e4,
@@ -3326,13 +3544,17 @@ export const useRpg = create<RpgState>((set, get) => ({
 				return;
 			}
 			get().noteMentor();
+			const bank = get().skillBank || 0;
+			const points = get().skillPoints + bank;
 			set({
 				charOpen: true,
 				charTab: "skills",
 				invOpen: false,
 				shop: null,
 				mentored: true,
-				toast: "Usta ağacı açtı. Artık puan harcayabilirsin."
+				skillPoints: points,
+				skillBank: 0,
+				toast: bank ? `Usta ağacı açtı. ${points} yetenek puanın kullanılabilir.` : "Usta ağacı açtı. Bundan sonra her seviyede puan gelir."
 			});
 			return;
 		}
@@ -3399,6 +3621,10 @@ export const useRpg = create<RpgState>((set, get) => ({
 			});
 			return;
 		}
+		if (near === "boss") {
+			set({ bossPrompt: get().mentor || null, shop: null, invOpen: false, charOpen: false, npcAsk: null });
+			return;
+		}
 		if (near === "fish") {
 			get().beginFish();
 			return;
@@ -3463,7 +3689,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 				bag,
 				toast,
 				quests,
-				invOpen: vendor && opening ? true : s.invOpen,
+				invOpen: s.invOpen,
 				charOpen: false
 			};
 		});
@@ -3471,7 +3697,35 @@ export const useRpg = create<RpgState>((set, get) => ({
 	openBagChest: (index) => {
 		const s = get();
 		const it = s.bag[index];
-		if (!it || it.id !== "starter-chest") return;
+		if (!it) return;
+		if (it.kind === "chest" && Array.isArray(it.loot)) {
+			const bag = s.bag.slice();
+			const limit = openBagCount(s.bagStage);
+			const pending = it.loot.slice();
+			bag[index] = null;
+			for (const drop of pending) {
+				let placed = false;
+				if (drop.kind === "mat" || drop.kind === "potion" || drop.kind === "fish") {
+					const stack = bag.findIndex((slot, i) => i < limit && slot?.id === drop.id && (slot.count ?? 1) + (drop.count ?? 1) <= 200);
+					if (stack >= 0) {
+						bag[stack] = { ...bag[stack], count: (bag[stack].count ?? 1) + (drop.count ?? 1) };
+						placed = true;
+					}
+				}
+				if (!placed) {
+					const hole = bag.findIndex((slot, i) => i < limit && slot == null);
+					if (hole < 0) {
+						set({ toast: "Envanterinde yer yok" });
+						return;
+					}
+					bag[hole] = drop;
+				}
+			}
+			set({ bag, toast: `${it.name} açıldı` });
+			systemSay(`${it.name} açıldı`);
+			return;
+		}
+		if (it.id !== "starter-chest") return;
 		const made = starterWeapon(s.classId);
 		const bag = s.bag.slice();
 		bag[index] = null;
@@ -3487,7 +3741,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 		const s = get();
 		const it = s.bag[index];
 		if (!it) return;
-		if (it.id === "starter-chest") {
+		if (it.id === "starter-chest" || it.kind === "chest") {
 			get().openBagChest(index);
 			return;
 		}
@@ -3531,11 +3785,13 @@ export const useRpg = create<RpgState>((set, get) => ({
 			bag,
 			equipped,
 			gearRev: s.gearRev + 1,
-			toast: `${displayName(it)} giyildi`,
+			toast: "",
 			chore: it.slot === "weapon" ? null : s.chore,
 			vein: it.slot === "weapon" && it.id !== "kazma" ? null : s.vein
 		};
 		applyVitals(next, false);
+		rememberFill(s, next);
+		systemSay(`${displayName(it)} giyildi`);
 		set(next);
 	},
 	unequip: (slot) => {
@@ -3560,7 +3816,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 			bag,
 			equipped,
 			gearRev: s.gearRev + 1,
-			toast: `${displayName(it)} çıkarıldı`,
+			toast: "",
 			chore: slot === "weapon" ? null : s.chore,
 			vein: slot === "weapon" ? null : s.vein
 		};
@@ -3599,9 +3855,10 @@ export const useRpg = create<RpgState>((set, get) => ({
 			bag,
 			equipped,
 			gearRev: s.gearRev + 1,
-			toast: `${displayName(it)} çantaya alındı`
+			toast: ""
 		};
 		applyVitals(next, false);
+		rememberFill(s, next);
 		set(next);
 	},
 	moveToPage: (from, page) => {
@@ -3750,7 +4007,8 @@ export const useRpg = create<RpgState>((set, get) => ({
 				s.unspent += 1;
 			}
 			s.vials = 0;
-			s.skillPoints += 1;
+			if (s.mentored) s.skillPoints += 1;
+			else s.skillBank = (s.skillBank || 0) + 1;
 			notes.push(`Seviye ${s.level}`);
 		}
 		if (s.level >= 99) s.xp = Math.min(s.xp, Math.max(0, s.xpTo - 1));
@@ -3789,7 +4047,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 				return;
 			}
 			const next = list.map((row, index) => rollEnchant(it.slot, list.filter((_, i) => i !== index)) || row);
-			bag[to] = { ...it, enchants: next };
+			bag[to] = { ...it, enchants: dedupeEnchants(next) };
 			set({ bag, gearRev: s.gearRev + 1, toast: "Efsunlar değişti" });
 			bumpQuest(get, set, "reroll");
 			return;
@@ -3804,7 +4062,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 			return;
 		}
 		list.push(rolled);
-		bag[to] = { ...it, enchants: list };
+		bag[to] = { ...it, enchants: dedupeEnchants(list) };
 		const equipped = { ...s.equipped };
 		for (const slot of Object.keys(equipped)) if (equipped[slot]?.uid === it.uid) equipped[slot] = bag[to];
 		const next = { ...s, bag, equipped, gearRev: s.gearRev + 1, toast: list[list.length - 1].name };
@@ -3940,20 +4198,20 @@ export const useRpg = create<RpgState>((set, get) => ({
 		const left = (pot.count ?? 1) - 1;
 		const pots = { ...s.pots, [kind]: left > 0 ? { ...pot, count: left } : null };
 		if (kind === "hp") {
-			const hp = Math.min(s.hpMax, s.hp + s.hpMax * 0.4);
+			const hp = Math.min(s.hpMax, s.hp + potTier(pot.id));
 			liveHp = hp;
-			set({ pots, hp, toast: "Can iksiri" });
+			set({ pots, hp, toast: pot.name });
 			return;
 		}
-		const mana = Math.min(s.manaMax, s.mana + s.manaMax * 0.4);
+		const mana = Math.min(s.manaMax, s.mana + potTier(pot.id));
 		liveMana = mana;
-		set({ pots, mana, toast: "Mana iksiri" });
+		set({ pots, mana, toast: pot.name });
 	},
 	setBeltPot: (kind, index) => {
 		const s = get();
 		const it = s.bag[index];
 		const want = kind === "hp" ? "pot-hp" : "pot-mp";
-		if (!it || it.id !== want) {
+		if (!it || !String(it.id).startsWith(want)) {
 			set({ toast: kind === "hp" ? "Can yuvasına kırmızı iksir sürükle" : "Mana yuvasına mavi iksir sürükle" });
 			return;
 		}
@@ -4237,14 +4495,14 @@ export const useRpg = create<RpgState>((set, get) => ({
 			staClock -= 2;
 			if (staRecover <= 0 && !sprinting) liveSta = Math.min(s.staMax, liveSta + s.staMax * .04);
 		}
-		liveMana = Math.min(s.manaMax, liveMana + 5 * dt);
+		liveMana = Math.min(s.manaMax, liveMana + 1.15 * dt);
 		if (!s.down && liveHp < s.hpMax) {
 			let worn = 0;
 			for (const it of Object.values(s.equipped)) if (it?.hp) worn += it.hp;
-			const gear = 1 + Math.min(1.35, worn / 55);
-			let rate = 2.6 * gear;
-			if (regenUntil > Date.now()) rate = Math.max(rate, 10);
-			if (reviveBoostUntil > Date.now()) rate *= 2.1;
+			const gear = 1 + Math.min(0.8, worn / 90);
+			let rate = 0.72 * gear;
+			if (regenUntil > Date.now()) rate = Math.max(rate, 4);
+			if (reviveBoostUntil > Date.now()) rate *= 1.8;
 			liveHp = Math.min(s.hpMax, liveHp + rate * dt);
 		}
 		let hurt = s.hurt;

@@ -3,7 +3,7 @@ import { bagRoom, tryReceiveItem, useRpg } from "@/game/rpg";
 import { partyMates } from "@/game/target";
 
 export type MobSnap = { id: string; hp: number; alive: boolean; anger: boolean; x: number; z: number };
-export type Loot = { id: string; items: Item[]; x: number; z: number };
+export type Loot = { id: string; items: Item[]; x: number; z: number; born: number };
 
 export type MarketListing = { uid: string; price: number; item: Item };
 export type MarketBoard = { id: string; nick: string; x: number; z: number; items: MarketListing[] };
@@ -112,7 +112,7 @@ export function takePendingDrops() {
 export function placeChest(items: Item[], x: number, z: number, id = `loot-${Math.random().toString(36).slice(2, 8)}`) {
   const pack = items.filter(Boolean);
   if (!pack.length) return null;
-  const row: Loot = { id, items: pack, x, z };
+  const row: Loot = { id, items: pack, x, z, born: Date.now() };
   loot = [...loot, row].slice(-24);
   sender?.({ kind: "drop", id, items: pack, item: pack[0], x, z });
   publish();
@@ -121,6 +121,41 @@ export function placeChest(items: Item[], x: number, z: number, id = `loot-${Mat
 
 export function placeLoot(item: Item, x: number, z: number, id = `loot-${Math.random().toString(36).slice(2, 8)}`) {
   return placeChest([item], x, z, id);
+}
+
+export function expireLoot(now = Date.now()) {
+  const next = loot.filter((entry) => now - (entry.born || now) < 20000);
+  if (next.length === loot.length) return;
+  if (chestId && !next.some((entry) => entry.id === chestId)) chestId = "";
+  loot = next;
+  publish();
+}
+
+export function scoopLoot(x: number, z: number, all: boolean) {
+  const near = loot
+    .map((entry) => ({ entry, d: Math.hypot(entry.x - x, entry.z - z) }))
+    .filter((row) => row.d < 2.15)
+    .sort((a, b) => a.d - b.d);
+  if (!near.length) return false;
+  const targets = all ? near : near.slice(0, 1);
+  let took = false;
+  for (const row of targets) {
+    const left: Item[] = [];
+    for (const item of row.entry.items) {
+      if (tryReceiveItem(item)) took = true;
+      else left.push(item);
+    }
+    if (!left.length) {
+      loot = loot.filter((entry) => entry.id !== row.entry.id);
+      if (chestId === row.entry.id) chestId = "";
+      sender?.({ kind: "take", id: row.entry.id });
+    } else if (left.length !== row.entry.items.length) {
+      loot = loot.map((entry) => (entry.id === row.entry.id ? { ...entry, items: left } : entry));
+      sender?.({ kind: "chest", id: row.entry.id, items: left });
+    }
+  }
+  if (took) publish();
+  return took;
 }
 
 export function takeRemoteHits() {
@@ -330,7 +365,7 @@ export function ingestField(from: string, data: unknown) {
     const items = listed.length ? listed : single ? [single] : [];
     const id = typeof row.id === "string" ? row.id : "";
     if (!items.length || !id || loot.some((entry) => entry.id === id)) return true;
-    loot = [...loot, { id, items, x: Number(row.x) || 0, z: Number(row.z) || 0 }].slice(-24);
+    loot = [...loot, { id, items, x: Number(row.x) || 0, z: Number(row.z) || 0, born: Date.now() }].slice(-24);
     publish();
     return true;
   }

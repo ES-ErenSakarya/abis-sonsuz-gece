@@ -40,6 +40,13 @@ export function chatOpen() {
   return focused || Date.now() < revealUntil;
 }
 
+export function chatAlpha() {
+  if (focused) return 1;
+  const left = revealUntil - Date.now();
+  if (left <= 0) return 0;
+  return left < 2200 ? left / 2200 : 1;
+}
+
 export function mailSnapshot() {
   return mail;
 }

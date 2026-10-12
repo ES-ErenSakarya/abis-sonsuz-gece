@@ -168,6 +168,11 @@ function upsertMate(list: Mate[], mate: Mate) {
   return [...list, mate].slice(-8);
 }
 
+export function hydrateFriends(list: Mate[]) {
+  friends = (list || []).filter((row) => row && row.id && row.nick).slice(0, 24);
+  publish();
+}
+
 export function removeFriend(id: string) {
   friends = friends.filter((mate) => mate.id !== id);
   publish();

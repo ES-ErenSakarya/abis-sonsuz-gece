@@ -47,6 +47,10 @@ function splitInvested(raw: unknown): {
   bossKills: number;
   duelWins: number;
   goldEarned: number;
+  skillBank: number;
+  filledGear: string[];
+  weekClaim: string;
+  friends: { id: string; nick: string; level: number }[];
 } {
   const obj = asJson<Record<string, unknown>>(raw, {});
   const num = (key: string) => (typeof obj[key] === "number" ? (obj[key] as number) : 0);
@@ -98,6 +102,17 @@ function splitInvested(raw: unknown): {
     bossKills: num("bossKills"),
     duelWins: num("duelWins"),
     goldEarned: num("goldEarned"),
+    skillBank: num("skillBank"),
+    filledGear: Array.isArray(obj.filledGear) ? obj.filledGear.filter((id) => typeof id === "string") : [],
+    weekClaim: typeof obj.weekClaim === "string" ? obj.weekClaim : "",
+    friends: Array.isArray(obj.friends)
+      ? obj.friends
+          .filter((row) => row && typeof row === "object" && typeof (row as { id?: unknown }).id === "string")
+          .map((row) => {
+            const mate = row as { id: string; nick?: unknown; level?: unknown };
+            return { id: mate.id, nick: typeof mate.nick === "string" ? mate.nick : "Dost", level: Math.max(1, Math.floor(Number(mate.level) || 1)) };
+          })
+      : [],
   };
 }
 
@@ -157,6 +172,10 @@ function rowOf(raw: {
     bossKills: stats.bossKills,
     duelWins: stats.duelWins,
     goldEarned: stats.goldEarned,
+    skillBank: stats.skillBank,
+    filledGear: stats.filledGear,
+    weekClaim: stats.weekClaim,
+    friends: stats.friends,
     bag: asJson<CharacterSave["bag"]>(raw.bag, []),
     equipped: asJson<CharacterSave["equipped"]>(raw.equipped, {
       weapon: null,
@@ -356,6 +375,10 @@ export const saveCharacter = createServerFn({ method: "POST" })
           bossKills: Math.max(0, Math.floor(Number(save.bossKills) || 0)),
           duelWins: Math.max(0, Math.floor(Number(save.duelWins) || 0)),
           goldEarned: Math.max(0, Math.floor(Number(save.goldEarned) || 0)),
+          skillBank: Math.max(0, Math.floor(Number(save.skillBank) || 0)),
+          filledGear: Array.isArray(save.filledGear) ? save.filledGear : [],
+          weekClaim: typeof save.weekClaim === "string" ? save.weekClaim : "",
+          friends: Array.isArray(save.friends) ? save.friends : [],
         }),
         JSON.stringify(Array.isArray(save.bag) ? save.bag.slice(0, BAG_SIZE) : []),
         JSON.stringify(save.equipped ?? {}),

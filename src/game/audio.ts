@@ -91,16 +91,20 @@ export function syncRealmMusic(nextRealm: string, active: boolean) {
   if (unlocked && music.paused) void music.play().catch(() => undefined);
 }
 
+const hitPool: HTMLAudioElement[] = [];
+
 export function playAttack(classId: string) {
   const src = HITS[classId] || HITS.savasci;
   if (!src) return;
-  if (!hit) {
-    hit = new Audio(src);
-    hit.preload = "auto";
-  } else if (!hit.src.endsWith(src)) {
-    hit.src = src;
+  const node = hitPool.find((row) => row.paused || row.ended) ?? new Audio();
+  if (!hitPool.includes(node)) hitPool.push(node);
+  if (hitPool.length > 6) hitPool.shift();
+  if (!node.src.endsWith(src)) node.src = src;
+  node.volume = Math.max(0.2, Math.min(1, 0.55 + volume * 0.35));
+  try {
+    node.currentTime = 0;
+  } catch {
+    /* not ready */
   }
-  hit.volume = Math.max(0.2, Math.min(1, 0.55 + volume * 0.35));
-  hit.currentTime = 0;
-  void hit.play().catch(() => undefined);
+  void node.play().catch(() => undefined);
 }

@@ -3,13 +3,13 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import * as THREE from "three";
 import { adoptDummy, createBeast, createClassAvatar, createHorse, createMentor, createTownsman, createVendor, hitBeast, hitDummy, mitigate, mobBite, mobXp, SPECIES, stickGear, syncBow, syncGear, tickBeast, tickDummy, tickVendor, weaponMesh, type Beast, type Dummy, type Mentor, type Vendor } from "@/game/actors";
 import { createCombat, type ShotTarget } from "@/game/combat";
-import { chatBubbles } from "@/game/chat";
-import { amHost, broadcastStall, chestView, emitHit, fieldLoot, fieldMobs, marketBoards, openChest, openStallView, placeChest, placeLoot, pushMobState, sendReward, setLootHint, shareXp, takePendingDrops, takeRemoteHits } from "@/game/field";
+import { chatBubbles, systemSay } from "@/game/chat";
+import { amHost, broadcastStall, chestView, closeChest, emitHit, expireLoot, fieldLoot, fieldMobs, marketBoards, openChest, openStallView, placeChest, placeLoot, pushMobState, sendReward, setLootHint, shareXp, takePendingDrops, takeRemoteHits } from "@/game/field";
 import { useHud } from "@/game/hudStore";
 import { viewport } from "@/game/viewport";
 import { axes, held, input, sim, takeHop } from "@/game/input";
-import { BOSSES, MENTORS, commitSkill, questGuide, rankOf, refundSkill, rollKillLoot, takeCast, useRpg, weaponStyleOf, enchantView, type NearKind, type WeaponStyle } from "@/game/rpg";
-import { beginRun, dungeonNow, endRun } from "@/game/dungeon";
+import { BOSSES, MENTORS, bossChestItem, commitSkill, meteorLoot, questGuide, rankOf, refundSkill, rollKillLoot, takeCast, tryReceiveItem, useRpg, weaponStyleOf, enchantView, type Item, type NearKind, type WeaponStyle } from "@/game/rpg";
+import { beginRun, bindDungeonEnter, dungeonNow, endRun } from "@/game/dungeon";
 import { playAttack, syncRealmMusic } from "@/game/audio";
 import { effectiveGfx, loadGfx, subscribeGfx } from "@/game/settings";
 import { buildVillage, composeGround, createWeather, disposeScenery, tickGrass, tickSmoke, type SmokePuff } from "@/game/scenery";
@@ -19,7 +19,7 @@ import { presence, remotes, type RemoteBody } from "@/game/online";
 import { readTarget, sendDuelHit, setMobCard, setSelection, takePick, type Sel } from "@/game/target";
 import { bindCreativeScene, clearEditables, editArmed, pickEditable, selectEditable, tickCreative, trackProp } from "@/game/creative";
 import { mountStudio, studioHop, studioLevelBlock, studioPaintPoint, studioPainting, studioRay, studioSpawners, studioZoneName, tickStudio, unmountStudio } from "@/game/studio";
-import { blocked, bridgeName, campSpawns, dryLand, faceYaw, FISHER_STAND, groundY, inWater, LAKE, onPier, PLAYER_R, REALMS, realmAt, realmGate, realmHerald, slide, VEINS, WELL, zoneName } from "@/game/world";
+import { blocked, bridgeName, campSpawns, dryLand, faceYaw, FISHER_STAND, FENCE_R, DUNGEON_BOUND, groundY, inWater, LAKE, liveVeins, meteorSpots, onPier, PLAYER_R, REALMS, realmAt, realmGate, realmHerald, slide, WELL, zoneName } from "@/game/world";
 
 const WALK_REF = 1.67;
 const _look = new THREE.Vector3();
@@ -1005,6 +1005,25 @@ function World() {
   const dummyRef = useRef<Dummy | null>(null);
   const beastsRef = useRef<Beast[]>([]);
   const portalLock = useRef(0);
+  const arenaRef = useRef<Map<string, THREE.Group>>(new Map());
+  type MeteorRock = {
+    id: string;
+    level: number;
+    realm: string;
+    x: number;
+    z: number;
+    hp: number;
+    hpMax: number;
+    mesh: THREE.Object3D;
+    broken: boolean;
+    respawn: number;
+    guards: number;
+  };
+  const meteorRef = useRef<MeteorRock[]>([]);
+  const chipMeteor = useRef<(rock: MeteorRock, dmg: number) => void>(() => undefined);
+  const bossLeave = useRef(0);
+  const shopAnchor = useRef({ key: "", x: 0, z: 0 });
+  const dropEnter = useRef<() => void>(() => undefined);
   const dungeonApi = useRef<{ spawn: (boss: (typeof BOSSES)[number], wave: number) => void; clear: (pack: number) => void }>({
     spawn: () => undefined,
     clear: () => undefined,
@@ -1095,25 +1114,9 @@ function World() {
       beasts.push(beast);
       group.add(beast.root);
     }
-    const makeGate = (x: number, z: number) => {
+    const makeArena = (x: number, z: number) => {
       const g = new THREE.Group();
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(1.25, 0.09, 12, 32),
-        new THREE.MeshStandardMaterial({ color: "#9fd0ff", emissive: "#3d7ed4", emissiveIntensity: 0.85, roughness: 0.28, metalness: 0.25 }),
-      );
-      ring.position.y = 1.45;
-      const foot = new THREE.Mesh(
-        new THREE.CircleGeometry(1.15, 28),
-        new THREE.MeshBasicMaterial({ color: "#7eb6ff", transparent: true, opacity: 0.38, side: THREE.DoubleSide, depthWrite: false }),
-      );
-      foot.rotation.x = -Math.PI / 2;
-      foot.position.y = 0.08;
-      g.add(ring, foot);
-      g.position.set(x, groundY(x, z), z);
-      return g;
-    };
-    const makeDisk = (x: number, z: number) => {
-      const g = new THREE.Group();
+      g.visible = false;
       const disk = new THREE.Mesh(
         new THREE.CylinderGeometry(12, 12.4, 0.5, 40),
         new THREE.MeshStandardMaterial({ color: "#2c2824", roughness: 0.7, metalness: 0.16 }),
@@ -1125,10 +1128,121 @@ function World() {
       );
       rim.rotation.x = Math.PI / 2;
       rim.position.set(x, 24.02, z);
-      g.add(disk, rim);
+      const wall = new THREE.Mesh(
+        new THREE.CylinderGeometry(12.15, 12.15, 3.8, 28, 1, true),
+        new THREE.MeshStandardMaterial({ color: "#4a433c", roughness: 0.86, side: THREE.DoubleSide }),
+      );
+      wall.position.set(x, 25.9, z);
+      g.add(disk, rim, wall);
       return g;
     };
-    for (const row of BOSSES) group.add(makeGate(row.x, row.z), makeDisk(row.x, row.z));
+    const makeDoor = (x: number, z: number, yaw: number) => {
+      const g = new THREE.Group();
+      const stone = new THREE.MeshStandardMaterial({ color: "#6a6258", roughness: 0.82 });
+      const wood = new THREE.MeshStandardMaterial({ color: "#3a2418", roughness: 0.78 });
+      const glow = new THREE.MeshStandardMaterial({ color: "#9fd0ff", emissive: "#3d7ed4", emissiveIntensity: 0.75, roughness: 0.3 });
+      const left = new THREE.Mesh(new THREE.BoxGeometry(0.35, 2.6, 0.4), stone);
+      left.position.set(-1.05, 1.3, 0);
+      const right = left.clone();
+      right.position.x = 1.05;
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.35, 0.45), stone);
+      lintel.position.y = 2.55;
+      const door = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.15, 0.12), wood);
+      door.position.y = 1.1;
+      const mark = new THREE.Mesh(new THREE.CircleGeometry(0.22, 16), glow);
+      mark.position.set(0, 1.7, 0.08);
+      g.add(left, right, lintel, door, mark);
+      g.position.set(x, groundY(x, z), z);
+      g.rotation.y = yaw;
+      return g;
+    };
+    for (const realm of REALMS) {
+      const radius = realm.id === "koy" ? 210 : 190;
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(radius, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2.05),
+        new THREE.MeshBasicMaterial({
+          color: realm.id === "ay" ? "#221a36" : realm.id === "dolunay" ? "#243044" : realm.id === "koy2" ? "#7f9aaf" : "#9ec0dc",
+          side: THREE.BackSide,
+          transparent: true,
+          opacity: realm.id === "ay" ? 0.62 : 0.34,
+          depthWrite: false,
+        }),
+      );
+      dome.position.set(realm.x, -4, realm.z);
+      group.add(dome);
+    }
+    const arenas = new Map<string, THREE.Group>();
+    const bossDoors: { name: string; id: string; x: number; z: number; yaw: number }[] = [];
+    for (const row of BOSSES) {
+      const arena = makeArena(row.x, row.z);
+      arenas.set(row.id, arena);
+      group.add(arena);
+      const home = REALMS.find((item) => item.id === row.realm) ?? REALMS[0];
+      let ang = Math.atan2(row.z - home.z, row.x - home.x);
+      const rad = row.realm === "koy" ? FENCE_R - 1.15 : DUNGEON_BOUND - 2.2;
+      if (row.realm === "koy" && Math.min(Math.abs(Math.cos(ang)), Math.abs(Math.sin(ang))) < 0.22) ang += 0.46;
+      const dx = Math.cos(ang);
+      const dz = Math.sin(ang);
+      const x = home.x + dx * rad;
+      const z = home.z + dz * rad;
+      const yaw = Math.atan2(-dx, -dz);
+      group.add(makeDoor(x, z, yaw));
+      bossDoors.push({ name: row.name, id: row.id, x: x - dx * 2.8, z: z - dz * 2.8, yaw });
+    }
+    arenaRef.current = arenas;
+    const meteors: MeteorRock[] = [];
+    for (const spot of meteorSpots()) {
+      const host = new THREE.Group();
+      const rock = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(1.15, 0),
+        new THREE.MeshStandardMaterial({ color: "#4e3d58", emissive: "#6a3a88", emissiveIntensity: 0.28, roughness: 0.58, metalness: 0.2 }),
+      );
+      rock.position.y = 0.72;
+      rock.castShadow = true;
+      const crystal = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.36, 0),
+        new THREE.MeshStandardMaterial({ color: "#e4c8ff", emissive: "#b060ee", emissiveIntensity: 0.85, roughness: 0.2 }),
+      );
+      crystal.position.y = 1.5;
+      host.add(rock, crystal);
+      host.position.set(spot.x, groundY(spot.x, spot.z), spot.z);
+      group.add(host);
+      const hp = 90 + spot.level * 8;
+      meteors.push({ id: spot.id, level: spot.level, realm: spot.realm, x: spot.x, z: spot.z, hp, hpMax: hp, mesh: host, broken: false, respawn: 0, guards: 0 });
+    }
+    meteorRef.current = meteors;
+    chipMeteor.current = (rock, dmg) => {
+      if (rock.broken || dmg <= 0) return;
+      rock.hp -= dmg;
+      floatAt(rock.x, 2.3, rock.z, `${dmg}`, false);
+      if (rock.guards < 3) {
+        const spec = SPECIES.slice().sort((a, b) => Math.abs(a.level - rock.level) - Math.abs(b.level - rock.level))[0] ?? SPECIES[0];
+        const ang = Math.random() * Math.PI * 2;
+        const x = rock.x + Math.cos(ang) * 2.6;
+        const z = rock.z + Math.sin(ang) * 2.6;
+        const pack = 700 + Math.max(0, meteorRef.current.indexOf(rock));
+        const beast = createBeast(x, z, `met-${rock.id}-${rock.guards}`, pack, { ...spec, level: rock.level, name: spec.name });
+        beast.anger = true;
+        beast.roam = 0.4;
+        beast.hp = beast.hpMax = Math.round(beast.hpMax * 1.2);
+        beast.root.position.y = groundY(x, z);
+        beastsRef.current.push(beast);
+        group.add(beast.root);
+        rock.guards += 1;
+      }
+      if (rock.hp <= 0) {
+        rock.broken = true;
+        rock.mesh.visible = false;
+        rock.respawn = 50;
+        const drops = meteorLoot(rock.level);
+        let stored = 0;
+        for (const item of drops) {
+          if (tryReceiveItem(item)) stored += 1;
+          else placeChest([item as Item], rock.x + 0.5, rock.z + 0.3);
+        }
+        systemSay(stored ? `Meteor kırıldı · ${stored} eşya` : "Meteor kırıldı, çanta dolu");
+      }
+    };
     const spawnDungeon = (boss: (typeof BOSSES)[number], wave: number) => {
       const spec = SPECIES.find((item) => item.id === boss.spec);
       if (!spec) return;
@@ -1154,7 +1268,7 @@ function World() {
         beast.boss = bossWave;
         const mul = bossWave ? 8 : 0.5 + wave * 0.2;
         beast.hp = beast.hpMax = Math.round(beast.hpMax * mul);
-        beast.root.position.y = groundY(x, z);
+        beast.root.position.y = groundY(x, z, true);
         beastsRef.current.push(beast);
         group.add(beast.root);
       }
@@ -1166,6 +1280,16 @@ function World() {
       }
       beastsRef.current = beastsRef.current.filter((beast) => beast.pack !== pack);
     };
+    dropEnter.current();
+    dropEnter.current = bindDungeonEnter((id) => {
+      const boss = BOSSES.find((item) => item.id === id);
+      if (!boss || dungeonNow() || useRpg.getState().down) return;
+      beginRun({ bossId: boss.id, wave: 1, name: boss.name }, { x: boss.x, z: boss.z, y: 24, r: 12 });
+      sim.x = boss.x;
+      sim.z = boss.z;
+      dungeonApi.current.spawn(boss, 1);
+      useRpg.setState({ bossPrompt: null, toast: `${boss.name} zindanı. Dalga 1` });
+    });
     const mentors = MENTORS.map((row) => {
       const mentor = createMentor(row.name, row.x, row.z, faceYaw(row.x, row.z), row.cls);
       const arrow = new THREE.Mesh(
@@ -1209,6 +1333,8 @@ function World() {
       const gate = realmGate(realm.id);
       townDefs.push({ role: "herald", name: "Görevli", x: herald.x, z: herald.z, cloth: "#3a3428", map: realm.id });
       townDefs.push({ role: "gate", name: "Işınlayıcı", x: gate.x, z: gate.z, cloth: "#24343c" });
+      townDefs.push({ role: "market", name: "Satıcı", x: realm.x + 6.4, z: realm.z - 3.4, cloth: "#314438" });
+      townDefs.push({ role: "smith", name: "Demirci", x: realm.x - 6.4, z: realm.z - 3.4, cloth: "#5a3030" });
     }
     townsRef.current = townDefs.map((row, index) => {
       const npc = createTownsman(row.name, row.x, row.z, row.yaw ?? faceYaw(row.x, row.z), row.cloth, Boolean(row.spear));
@@ -1224,6 +1350,12 @@ function World() {
       });
       return { root: npc.root, hips: npc.hips, role: row.role, map: row.map };
     });
+    for (const door of bossDoors) {
+      const npc = createTownsman(door.name, door.x, door.z, door.yaw, "#3a2430", true);
+      npc.root.position.y = groundY(door.x, door.z);
+      group.add(npc.root);
+      townsRef.current.push({ root: npc.root, hips: npc.hips, role: "boss", map: door.id });
+    }
     const stableTown = townsRef.current.find((row) => row.role === "stable");
     if (stableTown) {
       const horse = createHorse();
@@ -1490,6 +1622,9 @@ function World() {
       dummyRef.current = null;
       beastsRef.current = [];
       endRun();
+      dropEnter.current();
+      meteorRef.current = [];
+      arenaRef.current = new Map();
       mentorsRef.current = [];
       townsRef.current = [];
       horseRef.current = null;
@@ -1575,9 +1710,11 @@ function World() {
     const beasts = herd.filter((beast) => beast.alive && cone(beast.root.position.x, beast.root.position.z));
     const cut = lockedMelee ? [lockedMelee] : aoe ? beasts : beasts.slice(0, 1);
     const dummyHit = Boolean(dummy?.alive && cone(dummy.root.position.x, dummy.root.position.z));
-    if (!cut.length && !dummyHit) return;
+    const rock = meteorRef.current.find((row) => !row.broken && cone(row.x, row.z));
+    if (!cut.length && !dummyHit && !rock) return;
     hitLatch.current = true;
     const hit = useRpg.getState().punch();
+    if (rock) chipMeteor.current(rock, hit.dmg);
     if (dummyHit && dummy) {
       hitDummy(dummy, hit.dmg);
       floatAt(dummy.root.position.x, 1.7, dummy.root.position.z, `${hit.crit ? "KRİT " : ""}${hit.dmg}`, hit.crit);
@@ -1636,7 +1773,8 @@ function World() {
         }
         for (const beast of beastsRef.current) {
           if (!beast.alive || !beast.root.visible) continue;
-          consider(cylinderT(_picker.ray, beast.root.position.x, beast.root.position.z, 0.85, 0, 1.9), {
+          const by = beast.root.position.y;
+          consider(cylinderT(_picker.ray, beast.root.position.x, beast.root.position.z, 0.85, by, by + 2.05), {
             kind: "mob",
             id: beast.id,
             name: beast.name,
@@ -1671,7 +1809,7 @@ function World() {
           }, smith.root.position.x, smith.root.position.z);
         }
         consider(cylinderT(_picker.ray, WELL.x, WELL.z, 0.7, 0, 1.3), null, { role: "well", mentor: null }, WELL.x, WELL.z);
-        for (const vein of VEINS) {
+        for (const vein of liveVeins()) {
           consider(cylinderT(_picker.ray, vein.x, vein.z, 0.7, 0, 1.2), null, { role: "vein", mentor: null }, vein.x, vein.z);
         }
         const table = stallRef.current;
@@ -1683,7 +1821,7 @@ function World() {
           consider(cylinderT(_picker.ray, mesh.position.x, mesh.position.z, 0.9, 0, 1.1), null, { role: "stall", mentor: id }, mesh.position.x, mesh.position.z);
         }
         if (hit.talk) {
-          const reach = hit.talk.role === "smith" ? 2.6 : hit.talk.role === "well" ? 1.7 : hit.talk.role === "vein" ? 1.9 : hit.talk.role === "mentor" ? 2 : hit.talk.role === "stall" ? 3.2 : 2.2;
+          const reach = hit.talk.role === "smith" || hit.talk.role === "boss" ? 2.8 : hit.talk.role === "well" ? 1.7 : hit.talk.role === "vein" ? 1.9 : hit.talk.role === "mentor" ? 2 : hit.talk.role === "stall" ? 3.2 : 2.2;
           if (Math.hypot(sim.x - hit.x, sim.z - hit.z) <= reach) {
             if (hit.talk.role === "vein") useRpg.getState().selectVein(hit.x, hit.z);
             else if (hit.talk.role === "stall") openStallView(hit.talk.mentor || "mine");
@@ -1808,7 +1946,7 @@ function World() {
     const rig = rigRef.current;
     if (rig) {
       const riding = Boolean(useRpg.getState().riding && useRpg.getState().steed);
-      rig.position.set(sim.x, groundY(sim.x, sim.z) + (riding ? 0.2 : 0), sim.z);
+      rig.position.set(sim.x, groundY(sim.x, sim.z, true) + (riding ? 0.2 : 0), sim.z);
       rig.rotation.y = sim.yaw;
       rig.visible = true;
     }
@@ -1957,7 +2095,7 @@ function World() {
       if (release && !shotLatch.current && modelRef.current) {
         shotLatch.current = true;
         const origin = _aim.copy(fist.current);
-        if (origin.y < 0.6) origin.set(sim.x, 1.25, sim.z);
+        if (origin.y < groundY(sim.x, sim.z, true) + 0.45) origin.set(sim.x, groundY(sim.x, sim.z, true) + 1.25, sim.z);
         const sel = readTarget().sel;
         const mark =
           sel?.kind === "mob" && sel.id !== "dummy"
@@ -1970,9 +2108,18 @@ function World() {
         const fzw = -Math.cos(sim.yaw);
         if (mark) {
           const p = mark.root.position;
-          _look.set(p.x - origin.x, 1.05 - origin.y, p.z - origin.z);
+          _look.set(p.x - origin.x, p.y + 1.05 - origin.y, p.z - origin.z);
         } else _look.set(fxw, 0.04, fzw);
         const shot = useRpg.getState().punch();
+        const rock = meteorRef.current.find((row) => {
+          if (row.broken) return false;
+          const dx = row.x - sim.x;
+          const dz = row.z - sim.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist > 16 || dist < 0.4) return false;
+          return (dx * fxw + dz * fzw) / dist > 0.8;
+        });
+        if (rock) chipMeteor.current(rock, shot.dmg);
         if (style === "bow") combatRef.current?.fireArrow(origin, _look, shot.dmg, shot.crit, home);
         else if (style === "staff") combatRef.current?.fireBolt(origin, _look, shot.dmg, shot.crit, home);
       }
@@ -1996,16 +2143,19 @@ function World() {
         if (host) {
           hitBeast(beast, scaled);
           useRpg.getState().noteDamage(scaled);
-          floatAt(beast.root.position.x, 1.55, beast.root.position.z, `${crit ? "KRİT " : ""}${scaled}`, crit);
+          floatAt(beast.root.position.x, beast.root.position.y + 1.55, beast.root.position.z, `${crit ? "KRİT " : ""}${scaled}`, crit);
           if (!beast.alive) {
             const xp = mobXp(beast.level, beast.boss, useRpg.getState().level);
             const gold = 4 + beast.level;
             shareXp(xp);
             useRpg.getState().addGold(gold);
             useRpg.getState().noteKill(beast.specId, beast.level);
-            floatAt(beast.root.position.x, 2.15, beast.root.position.z, `+${xp} XP · +${gold} altın`, false);
-            const drops = rollKillLoot(beast.level, beast.boss);
-            if (drops.length) placeChest(drops, beast.root.position.x + (Math.random() - 0.5) * 0.4, beast.root.position.z + (Math.random() - 0.5) * 0.4);
+            floatAt(beast.root.position.x, beast.root.position.y + 2.15, beast.root.position.z, `+${xp} XP · +${gold} altın`, false);
+            const dungeonBoss = beast.boss && beast.pack >= 900;
+            if (!dungeonBoss) {
+              const drops = rollKillLoot(beast.level, beast.boss, useRpg.getState().level);
+              if (drops.length) placeChest(drops as Item[], beast.root.position.x + (Math.random() - 0.5) * 0.4, beast.root.position.z + (Math.random() - 0.5) * 0.4);
+            }
           }
         } else {
           emitHit(beast.id, scaled);
@@ -2071,7 +2221,7 @@ function World() {
           if (melee) combatRef.current?.slash(sim.x, 1.15, sim.z, sim.yaw, false);
           else {
             const origin = _aim.set(sim.x, 1.35, sim.z);
-            _look.set(beast.root.position.x - origin.x, 1.05 - origin.y, beast.root.position.z - origin.z);
+            _look.set(beast.root.position.x - origin.x, beast.root.position.y + 1.05 - origin.y, beast.root.position.z - origin.z);
             if (classId === "okcu") combatRef.current?.fireArrow(origin, _look, 0, false, beast.id);
             else combatRef.current?.fireBolt(origin, _look, 0, false, beast.id);
           }
@@ -2118,9 +2268,14 @@ function World() {
         const animReach = budget.mobs === 0 ? 26 : budget.mobs === 1 ? 54 : budget.distance;
         const anim2 = animReach * animReach;
         const hotPacks = new Set<number>();
+        const inside = Boolean(dungeonNow());
         for (const beast of beasts) if (beast.alive && beast.anger) hotPacks.add(beast.pack);
         for (const beast of beasts) {
           if (beast.pack >= 900) continue;
+          if (inside) {
+            beast.root.visible = false;
+            continue;
+          }
           const dx = beast.root.position.x - sim.x;
           const dz = beast.root.position.z - sim.z;
           const near = beast.anger || hotPacks.has(beast.pack) || dx * dx + dz * dz <= reach2;
@@ -2158,7 +2313,7 @@ function World() {
             beast.hp = Math.max(0, beast.hp - beast.poisonDps * dt);
             if (beast.hp <= 0) {
               beast.alive = false;
-              beast.respawn = 8;
+              beast.respawn = 10;
               const xp = mobXp(beast.level, beast.boss, useRpg.getState().level);
               const gold = 4 + beast.level;
               shareXp(xp);
@@ -2187,27 +2342,19 @@ function World() {
           }
           beast.root.position.y = groundY(beast.root.position.x, beast.root.position.z);
         }
-        const packs = new Set(beasts.map((beast) => beast.pack));
-        for (const pack of packs) {
-          if (pack >= 900) continue;
-          const members = beasts.filter((beast) => beast.pack === pack);
-          if (members.length && members.every((beast) => !beast.alive)) {
-            const wait = members.some((beast) => beast.boss) ? 20 : 15;
-            if (!packLeft.current[pack]) packLeft.current[pack] = wait;
-            packLeft.current[pack] -= dt;
-            if (packLeft.current[pack] <= 0) {
-              for (const beast of members) {
-                beast.alive = true;
-                beast.hp = beast.hpMax;
-                beast.anger = false;
-                beast.poison = 0;
-                beast.slow = 0;
-                beast.root.rotation.x = 0;
-                beast.root.position.set(beast.homeX, 0, beast.homeZ);
-              }
-              packLeft.current[pack] = 0;
-            }
-          } else packLeft.current[pack] = 0;
+        for (const beast of beasts) {
+          if (beast.pack >= 700) continue;
+          if (beast.alive) continue;
+          if (beast.respawn <= 0) beast.respawn = 10;
+          beast.respawn -= dt;
+          if (beast.respawn > 0) continue;
+          beast.alive = true;
+          beast.hp = beast.hpMax;
+          beast.anger = false;
+          beast.poison = 0;
+          beast.slow = 0;
+          beast.root.rotation.x = 0;
+          beast.root.position.set(beast.homeX, groundY(beast.homeX, beast.homeZ), beast.homeZ);
         }
         mobClock.current += dt;
         if (mobClock.current > 0.4) {
@@ -2257,12 +2404,19 @@ function World() {
         const pack = 900 + BOSSES.findIndex((row) => row.id === run.bossId);
         const members = beastsRef.current.filter((beast) => beast.pack === pack);
         const leave = (note: string) => {
+          bossLeave.current = 0;
           dungeonApi.current.clear(pack);
           endRun();
           portalLock.current = performance.now() + 2800;
           if (boss) {
-            sim.x = boss.x + 4.2;
-            sim.z = boss.z + 4.2;
+            const home = REALMS.find((item) => item.id === boss.realm) ?? REALMS[0];
+            let ang = Math.atan2(boss.z - home.z, boss.x - home.x);
+            const rad = boss.realm === "koy" ? FENCE_R - 1.15 : DUNGEON_BOUND - 2.2;
+            if (boss.realm === "koy" && Math.min(Math.abs(Math.cos(ang)), Math.abs(Math.sin(ang))) < 0.22) ang += 0.46;
+            const dx = Math.cos(ang);
+            const dz = Math.sin(ang);
+            sim.x = home.x + dx * rad - dx * 4.2;
+            sim.z = home.z + dz * rad - dz * 4.2;
           }
           if (note) useRpg.setState({ toast: note });
         };
@@ -2285,27 +2439,37 @@ function World() {
               }
             }
             const struck = tickBeast(beast, dt, sim.x, sim.z, camera, false);
-            beast.root.position.y = groundY(beast.root.position.x, beast.root.position.z);
+            beast.root.position.y = groundY(beast.root.position.x, beast.root.position.z, true);
             if (struck && !useRpg.getState().down) {
               const bite = Math.atan2(-(sim.x - beast.root.position.x), -(sim.z - beast.root.position.z));
-              combatRef.current?.slash(beast.root.position.x, 0.85, beast.root.position.z, bite, false);
+              combatRef.current?.slash(beast.root.position.x, beast.root.position.y + 0.85, beast.root.position.z, bite, false);
               const me = useRpg.getState();
               const dmg = mobBite(beast.level, me.level);
               const dead = me.hurtPlayer(dmg);
-              floatAt(sim.x, 1.5, sim.z, `-${dmg}`, false);
+              floatAt(sim.x, groundY(sim.x, sim.z, true) + 1.5, sim.z, `-${dmg}`, false);
               if (dead) useRpg.getState().knockDown();
             }
           }
           if (useRpg.getState().down) leave("");
           else if (members.length && members.every((beast) => !beast.alive)) {
-            if (run.wave >= 5) leave(`${boss?.name || "Boss"} düştü. Kapının önündesin.`);
-            else if (boss) {
+            if (run.wave >= 5) {
+              if (!bossLeave.current) {
+                bossLeave.current = performance.now() + 10000;
+                if (boss) tryReceiveItem(bossChestItem(boss.name, boss.level));
+                useRpg.setState({ toast: "Sandık envanterinde. 10 saniye sonra kapıya döneceksin." });
+              } else if (performance.now() >= bossLeave.current) {
+                bossLeave.current = 0;
+                leave("");
+              }
+            } else if (boss) {
+              bossLeave.current = 0;
               dungeonApi.current.clear(pack);
               beginRun({ bossId: boss.id, wave: run.wave + 1, name: boss.name }, { x: boss.x, z: boss.z, y: 24, r: 12 });
               dungeonApi.current.spawn(boss, run.wave + 1);
               useRpg.setState({ toast: run.wave + 1 === 5 ? `${boss.name} geliyor` : `Dalga ${run.wave + 1}` });
             }
           } else if (boss) {
+            bossLeave.current = 0;
             const dx = sim.x - boss.x;
             const dz = sim.z - boss.z;
             const dist = Math.hypot(dx, dz) || 1;
@@ -2315,16 +2479,16 @@ function World() {
             }
           }
         }
-      } else if (playing && !useRpg.getState().down && performance.now() > portalLock.current) {
-        for (const boss of BOSSES) {
-          if (Math.hypot(sim.x - boss.x, sim.z - boss.z) >= 1.75) continue;
-          beginRun({ bossId: boss.id, wave: 1, name: boss.name }, { x: boss.x, z: boss.z, y: 24, r: 12 });
-          sim.x = boss.x;
-          sim.z = boss.z;
-          dungeonApi.current.spawn(boss, 1);
-          useRpg.setState({ toast: `${boss.name} zindanı. Dalga 1 — üstüne koşan 3 yaratık` });
-          break;
-        }
+      }
+      for (const [id, mesh] of arenaRef.current) mesh.visible = dungeonNow()?.bossId === id;
+      for (const rock of meteorRef.current) {
+        if (!rock.broken) continue;
+        rock.respawn -= dt;
+        if (rock.respawn > 0) continue;
+        rock.broken = false;
+        rock.hp = rock.hpMax;
+        rock.guards = 0;
+        rock.mesh.visible = true;
       }
       for (const beast of beastsRef.current) stepPuppet(beast, dt);
       let near: NearKind | null = null;
@@ -2352,13 +2516,22 @@ function World() {
         if (onPier(sim.x, sim.z) || (lake < LAKE.r + 1.15 && lake > LAKE.r - 1.2)) near = "fish";
       }
       if (!near) {
-        for (const vein of VEINS) {
+        for (const vein of liveVeins()) {
           if (Math.hypot(sim.x - vein.x, sim.z - vein.z) < 1.8) {
             near = "vein";
             break;
           }
         }
       }
+      const panel = useRpg.getState();
+      const panelKey = `${panel.shop || ""}|${panel.bossPrompt || ""}|${panel.npcAsk || ""}|${panel.boardFor || ""}`;
+      if (panelKey !== "|||") {
+        if (shopAnchor.current.key !== panelKey) shopAnchor.current = { key: panelKey, x: sim.x, z: sim.z };
+        else if (Math.hypot(sim.x - shopAnchor.current.x, sim.z - shopAnchor.current.z) > 7.6) {
+          useRpg.setState({ shop: null, boardFor: null, boardMap: null, npcAsk: null, bossPrompt: null });
+          shopAnchor.current.key = "";
+        }
+      } else shopAnchor.current.key = "";
       for (const town of townsRef.current) {
         town.root.position.y = groundY(town.root.position.x, town.root.position.z);
         town.hips.rotation.y = Math.sin(lifeRef.current * 0.6 + town.root.position.x) * 0.05;
@@ -2376,7 +2549,7 @@ function World() {
         const on = Boolean(playing && rider.riding && rider.steed);
         mount.visible = on;
         if (on) {
-          mount.position.set(sim.x, groundY(sim.x, sim.z), sim.z);
+          mount.position.set(sim.x, groundY(sim.x, sim.z, true), sim.z);
           mount.rotation.y = sim.yaw + Math.PI;
         }
       }
@@ -2513,7 +2686,7 @@ function World() {
       const targets: ShotTarget[] = [];
       if (dummy?.alive) targets.push({ id: "dummy", x: dummy.root.position.x, y: 1.25, z: dummy.root.position.z, alive: true });
       for (const beast of beasts) {
-        if (beast.alive) targets.push({ id: beast.id, x: beast.root.position.x, y: 1.05, z: beast.root.position.z, alive: true });
+        if (beast.alive) targets.push({ id: beast.id, x: beast.root.position.x, y: beast.root.position.y + 1.05, z: beast.root.position.z, alive: true });
       }
       if (duel.phase === "live") {
         const foe = remotes.get(duel.id);
@@ -2538,6 +2711,7 @@ function World() {
       for (const item of takePendingDrops()) placeLoot(item, sim.x + 0.35, sim.z + 0.15);
       const bagHost = lootRoot.current;
       if (bagHost) {
+        expireLoot();
         const rows = fieldLoot();
         const ids = new Set(rows.map((row) => row.id));
         const opened = chestView()?.id ?? "";
@@ -2564,9 +2738,17 @@ function World() {
           }
         }
         const touching = rows.find((row) => Math.hypot(row.x - sim.x, row.z - sim.z) < 1.7);
-        setLootHint(touching ? (touching.id === opened ? "Sandık açık" : "E — sandığı aç") : "");
+        const openedNow = chestView();
+        if (openedNow && Math.hypot(openedNow.x - sim.x, openedNow.z - sim.z) > 3.4) closeChest();
+        setLootHint(touching ? "E — aç · EE — al · Z — yakındakiler" : "");
       }
       syncRealmMusic(realmAt(sim.x, sim.z).id, true);
+      for (const vein of liveVeins()) {
+        const mesh = scene.getObjectByName(`vein-rock-${vein.id}`);
+        if (!mesh) continue;
+        const y = groundY(vein.x, vein.z) + 0.28;
+        if (Math.abs(mesh.position.x - vein.x) > 0.05 || Math.abs(mesh.position.z - vein.z) > 0.05) mesh.position.set(vein.x, y, vein.z);
+      }
     } else {
       syncRealmMusic("", false);
       setLootHint("");
@@ -2628,7 +2810,7 @@ function World() {
       const yaw = input.orbit;
       const pitch = Math.max(-0.45, Math.min(1.15, input.pitch));
       const dist = Math.max(3.4, Math.min(11, input.dist || 5.6));
-      const gy = groundY(sim.x, sim.z);
+      const gy = groundY(sim.x, sim.z, true);
       const horiz = Math.cos(pitch);
       const lookY = gy + 1.35;
       let camY = lookY + Math.sin(pitch) * dist;
@@ -2647,8 +2829,9 @@ function World() {
     if (light) {
       const focusX = playing ? sim.x : 0;
       const focusZ = playing ? sim.z : 0;
-      light.position.set(focusX + 8, 12, focusZ + 5);
-      light.target.position.set(focusX, 0, focusZ);
+      const gy = groundY(focusX, focusZ, true);
+      light.position.set(focusX + 8, gy + 18, focusZ + 5);
+      light.target.position.set(focusX, gy + 1, focusZ);
       light.target.updateMatrixWorld();
     }
 
@@ -2700,7 +2883,7 @@ function World() {
         av.prevX = body.x;
         av.prevZ = body.z;
         av.phase += dt * (body.moving ? (body.run > 0.45 ? 10.2 : 6.4) : 1.2);
-        const text = `${body.nick} · Sv.${body.level}`;
+        const text = `Sv.${body.level}  ${body.nick}`;
         if (av.label !== text) {
           av.label = text;
           paintLabel(av.tag, text);
@@ -2746,11 +2929,11 @@ function World() {
           plate.dataset.who = key;
           plate.replaceChildren();
           const name = document.createElement("span");
-          name.textContent = `${who.nick} · Sv.${who.level}`;
+          name.textContent = `Sv.${who.level}  ${who.nick}`;
           plate.appendChild(name);
           if (title) {
             const mark = document.createElement("span");
-            mark.textContent = ` · ${title.name}`;
+            mark.textContent = `  ${title.name}`;
             mark.style.color = title.color;
             if (title.glow) mark.style.textShadow = `0 0 8px ${title.color}`;
             plate.appendChild(mark);

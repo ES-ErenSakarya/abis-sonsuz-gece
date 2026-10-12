@@ -291,3 +291,20 @@ export function beginPlay(where?: { x?: number; z?: number } | null) {
   src.start();
   void ctx.resume();
 }
+
+export function releaseMoveKeys() {
+  const keys = bag().keys;
+  for (const code of ["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "ShiftLeft", "ShiftRight", "Space"]) keys.delete(code);
+  bag().sprint = false;
+}
+
+let bagDrag = false;
+
+export function setBagDrag(on: boolean) {
+  bagDrag = on;
+  if (on) releaseMoveKeys();
+}
+
+export function bagDragging() {
+  return bagDrag;
+}

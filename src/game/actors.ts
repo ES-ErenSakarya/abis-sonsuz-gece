@@ -1001,15 +1001,15 @@ function buildCreature(spec) {
 	};
 }
 export function mobHpFor(level, weight = 1) {
-	const hit = 30 + Math.max(0, level - 1) * 1.3;
-	const hits = 4 + level * 0.15;
-	return Math.max(48, Math.round(hit * hits * weight));
+	const hit = 42 + Math.max(0, level - 1) * 1.85;
+	const hits = 5.2 + level * 0.18;
+	return Math.max(70, Math.round(hit * hits * weight));
 }
 export function mitigate(mobLevel, playerLevel, dmg) {
 	const gap = mobLevel - playerLevel;
-	let mult = 1;
-	if (gap > 0) mult = Math.max(0.08, 1 - gap * 0.028);
-	else if (gap < 0) mult = Math.min(2.2, 1 + -gap * 0.035);
+	let mult = 0.68;
+	if (gap > 0) mult *= Math.max(0.1, 1 - gap * 0.045);
+	else if (gap < 0) mult *= Math.min(1.25, 1 + -gap * 0.01);
 	return Math.max(1, Math.round(dmg * mult));
 }
 export function mobBite(mobLevel, playerLevel) {
@@ -1023,7 +1023,7 @@ export function mobBite(mobLevel, playerLevel) {
 }
 export function mobXp(level, boss, playerLevel) {
 	const xp = Math.round(20 + Math.max(1, level) * 8);
-	const base = boss ? xp * 8 : xp;
+	const base = boss ? Math.round(xp * 2.15) : xp;
 	const gap = Math.max(0, Math.floor(playerLevel || level) - Math.floor(level));
 	const scale = Math.pow(0.82, Math.min(30, gap));
 	return Math.max(1, Math.round(base * scale));
@@ -1154,9 +1154,13 @@ export function tickBeast(b, dt, px, pz, cam, puppet = false) {
 		const hot = b.flash > 0;
 		if (b.body) {
 			b.body.traverse((obj) => {
-				if (!obj.isMesh || !obj.material || !obj.material.emissive) return;
-				obj.material.emissive.set(hot ? "#ff4a32" : "#000000");
-				obj.material.emissiveIntensity = hot ? 1.1 : 0;
+				if (!obj.isMesh || !obj.material || !obj.material.color) return;
+				if (obj.userData.baseColor == null) obj.userData.baseColor = obj.material.color.getHex();
+				obj.material.color.set(hot ? "#ff3b32" : obj.userData.baseColor);
+				if (obj.material.emissive) {
+					obj.material.emissive.set(hot ? "#ff2a22" : "#000000");
+					obj.material.emissiveIntensity = hot ? 0.85 : 0;
+				}
 			});
 		}
 	}
@@ -1267,21 +1271,39 @@ export function hitBeast(b, dmg) {
 	if (!b.alive) return;
 	b.hp = Math.max(0, b.hp - dmg);
 	b.shake = .28;
-	b.flash = 0.28;
+	b.flash = 0.34;
 	if (b.hp <= 0) {
 		b.alive = false;
-		b.respawn = 15;
+		b.respawn = 10;
 	}
 }
 function itemId(value) {
 	if (value && typeof value === "object" && "id" in value && typeof value.id === "string") return value.id;
 	return value ? "gece-weapon" : "";
 }
-export function weaponMesh(style) {
+function paintPlus(root, plus) {
+	const glow = Math.min(1, Math.max(0, Number(plus) || 0) / 10);
+	if (!root || glow <= 0) return;
+	root.traverse((obj) => {
+		if (!obj.isMesh || !obj.material || !obj.material.emissive) return;
+		obj.material.emissive.set(glow > 0.85 ? "#fff1c2" : glow > 0.55 ? "#7ec8ff" : "#3a6ea5");
+		obj.material.emissiveIntensity = 0.12 + glow * 1.25;
+	});
+}
+function gearHash(id) {
+	let n = 0;
+	const text = String(id || "x");
+	for (let i = 0; i < text.length; i++) n = (n * 33 + text.charCodeAt(i)) >>> 0;
+	return n;
+}
+export function weaponMesh(style, seed = 0, plus = 0) {
 	const g = new THREE.Group();
-	const steel = surf("/textures/steel.jpg", "#d5dbe3", 0.32, 0.86, 1, 3);
+	const v = Math.abs(Math.floor(Number(seed) || 0)) % 5;
+	const steelTint = ["#d5dbe3", "#c9a36a", "#9eb0c4", "#f4f7fb", "#8d9aa8"][v];
+	const woodTint = ["#6a4428", "#4a3020", "#7a5a32", "#3a2418", "#8a6840"][v];
+	const steel = surf("/textures/steel.jpg", steelTint, 0.32, 0.86, 1, 3);
 	const steelDark = surf("/textures/steel.jpg", "#4a5158", 0.4, 0.8, 1, 2);
-	const wood = surf("/textures/wood.jpg", "#6a4428", 0.78, 0.04, 1, 3);
+	const wood = surf("/textures/wood.jpg", woodTint, 0.78, 0.04, 1, 3);
 	const wrap = surf("/textures/leather.jpg", "#3a2a1c", 0.84, 0.02, 2, 1);
 	const gripAt = (y = 0.05) => g.position.set(0, y, 0.012);
 	if (style === "bow") {
@@ -1410,6 +1432,9 @@ export function weaponMesh(style) {
 		mat.depthWrite = true;
 		mat.depthTest = true;
 	});
+	const n = Math.abs(Math.floor(Number(seed) || 0));
+	g.scale.set(0.82 + (n % 5) * 0.08, 0.86 + ((n >> 3) % 5) * 0.06, 1);
+	paintPlus(g, plus);
 	return g;
 }
 function weaponStand() {
@@ -1517,6 +1542,17 @@ export function syncGear(model, equipped) {
 	const store = model.userData.gear ??= {};
 	const weaponId = itemId(equipped.weapon);
 	const style = weaponStyleOf(weaponId);
+	const wsig = `${weaponId}:${equipped.weapon?.plus || 0}`;
+	const dropPiece = (slot) => {
+		const piece = store[slot];
+		if (!piece) return;
+		const parts = piece.userData.parts || [];
+		for (const part of parts) part.parent?.remove(part);
+		if (piece.userData.extra) piece.userData.extra.parent?.remove(piece.userData.extra);
+		piece.parent?.remove(piece);
+		delete store[slot];
+	};
+	if (store.weapon && store.weapon.userData.sig !== wsig) dropPiece("weapon");
 	const parentOf = (slot) => {
 		if (slot === "weapon") return model.getObjectByName("RightHand");
 		if (slot === "gloves") return model.getObjectByName("RightHand");
@@ -1550,12 +1586,15 @@ export function syncGear(model, equipped) {
 	}
 	const make = (slot) => {
 		if (slot === "weapon") {
-			const g = weaponMesh(style);
+			const g = weaponMesh(style, gearHash(weaponId), equipped.weapon?.plus || 0);
 			g.userData.kind = style;
+			g.userData.sig = `${weaponId}:${equipped.weapon?.plus || 0}`;
 			if (style === "bow") g.userData.straight = 1;
 			if (style === "dagger") seatDagger(g, 1);
 			return g;
 		}
+		const tones = ["#8a93a0", "#6a4a32", "#3e4a38", "#4a3a55", "#7a6840", "#2e3a48", "#5c4030", "#303848"];
+		const tone = tones[gearHash(equipped[slot]?.id) % tones.length];
 		const g = new THREE.Group();
 		const wear = (boneName, mesh) => {
 			const host = model.getObjectByName(boneName) || g;
@@ -1569,7 +1608,7 @@ export function syncGear(model, equipped) {
 		} else if (slot === "armor") {
 			g.userData.fitted = true;
 			const bulk = model.userData.bulk || 1;
-			const plateMat = std(NIGHT, 0.45, 0.42);
+			const plateMat = std(tone, 0.45, 0.42);
 			const clothMat = std("#2c241c", 0.68, 0.12);
 			const cuirass = new THREE.Mesh(new THREE.CapsuleGeometry(0.168 * bulk, 0.1, 5, 12), plateMat);
 			cuirass.position.set(0, 0.06, 0);
@@ -1665,10 +1704,13 @@ export function syncGear(model, equipped) {
 			return;
 		}
 		const on = Boolean(equipped[slot]);
+		const sig = on ? `${equipped[slot].id}:${equipped[slot].plus || 0}` : "";
+		if (on && store[slot] && store[slot].userData.sig && store[slot].userData.sig !== sig) dropPiece(slot);
 		const wearable = slot === "weapon" || slot === "armor" || slot === "boots";
 		if (on && !store[slot] && !(model.userData.classMesh && !wearable)) {
 			const piece = make(slot);
 			if (!piece) return;
+			piece.userData.sig = sig;
 			store[slot] = piece;
 			parentOf(slot)?.add(piece);
 		}
@@ -1681,6 +1723,10 @@ export function syncGear(model, equipped) {
 			if (parts) for (const part of parts) part.visible = show;
 			const extra = piece.userData.extra;
 			if (extra) extra.visible = show;
+			if (show && on) {
+				paintPlus(piece, equipped[slot].plus || 0);
+				if (parts) for (const part of parts) paintPlus(part, equipped[slot].plus || 0);
+			}
 		}
 	});
 	if (store.offhand) store.offhand.visible = style === "dagger" && Boolean(equipped.weapon);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { bindControlsTest, input, queueHop, readSim } from "@/game/input";
+import { bindControlsTest, bagDragging, input, queueHop, readSim, setBagDrag } from "@/game/input";
 import { useHud } from "@/game/hudStore";
 import { HudAnchor, applyHudScale, hudAnchors, placeWindow } from "@/game/hudScale";
 import { viewport } from "@/game/viewport";
@@ -9,13 +9,13 @@ import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { AuthScreens, CharacterScreens, leaveToCharacters } from "@/game/AccountScreens";
 import { NetLive } from "@/game/NetLive";
 import { answerDuel, answerSocial, addTradeItem, blockMate, closeTrade, endDuel, leaveParty, offerDuel, offerSocial, offerTradeGold, queuePick, removeFriend, setTradeOk, subscribeTarget, targetSnapshot } from "@/game/target";
-import { chatFocused, chatOpen, chatSnapshot, mailSnapshot, openMail, sendChat, sendWhisper, setChatFocus, setWhisper, subscribeChat, systemSay, whisperTarget } from "@/game/chat";
-import { askStallBuy, chestView, closeChest, closeStallView, fieldRev, lootHint, marketBoards, openNearChest, queueGroundDrop, stallViewId, subscribeField, takeChestItem } from "@/game/field";
+import { chatAlpha, chatFocused, chatOpen, chatSnapshot, mailSnapshot, openMail, sendChat, sendWhisper, setChatFocus, setWhisper, subscribeChat, systemSay, whisperTarget } from "@/game/chat";
+import { askStallBuy, chestView, closeChest, closeStallView, fieldRev, lootHint, marketBoards, openNearChest, queueGroundDrop, scoopLoot, stallViewId, subscribeField, takeChestItem } from "@/game/field";
 import { captureSave, readCarry, setCarry } from "@/game/rpg";
 import { saveCharacter, leaderboard, type BoardRow } from "@/game/account";
-import { dungeonNow, subscribeDungeon } from "@/game/dungeon";
+import { dungeonNow, requestDungeon, subscribeDungeon } from "@/game/dungeon";
 import { useSession } from "@/game/session";
-import { CATALOG, CLASS_TREES, className, displayName, ENHANCE, GATE_COST, giverLabel, itemStats, matForPlus, MENTORS, offerForNpc, activeForNpc, readyForNpc, nextStoryRow, questBoardRow, questGiver, questGuide, questMapFor, questMatchesNpc, openBagCount, PAGE_SIZE, rankOf, saleGold, SKILL_MAX, skillCdLeft, skillCdTotal, skillPreview, skillTier, SLOT_LABEL, STAT_HINT, STAT_LABEL, sumStats, upgradeChance, useRpg, weaponStyleOf, CRAFTS, type CharTab, type EquipSlot, type Item, type NearKind, type ShopKind, type StatKey } from "@/game/rpg";
+import { CATALOG, CLASS_TREES, BOSSES, claimWeekly, className, displayName, ENHANCE, GATE_COST, giverLabel, itemStats, matForPlus, MENTORS, offerForNpc, activeForNpc, readyForNpc, nextStoryRow, questBoardRow, questGiver, questGuide, questMapFor, questMatchesNpc, openBagCount, PAGE_SIZE, rankOf, saleGold, SKILL_MAX, skillCdLeft, skillCdTotal, skillPreview, skillTier, SLOT_LABEL, STAT_HINT, STAT_LABEL, sumStats, upgradeChance, useRpg, weaponStyleOf, CRAFTS, type CharTab, type EquipSlot, type Item, type NearKind, type ShopKind, type StatKey } from "@/game/rpg";
 let exitHandle = 0;
 function beginExit(kind: "char" | "out") {
   window.clearInterval(exitHandle);
@@ -451,6 +451,7 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
   const [menu, setMenu] = useState<null | "root" | "opts">(null);
   const menuRef = useRef(menu);
   const friendsRef = useRef(false);
+  const eTap = useRef(0);
   menuRef.current = menu;
   friendsRef.current = friendsOpen;
   const drag = useRef<{ x: number; y: number } | null>(null);
@@ -512,6 +513,7 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
         return;
       }
       if (MOVE_KEYS.has(e.code)) {
+        if (bagDragging()) return;
         input.keys.add(e.code);
         e.preventDefault();
         return;
@@ -538,23 +540,14 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
         else if (!rpg.chore && style === "olta") rpg.beginFish();
       }
       if (e.code === "Escape") {
-        const panels = useRpg.getState();
-        if (panels.invOpen || panels.charOpen || panels.shop) {
-          panels.closePanels();
-          e.preventDefault();
-          return;
-        }
-        if (friendsRef.current) {
-          setFriendsOpen(false);
-          e.preventDefault();
-          return;
-        }
-        if (menuRef.current) {
-          setMenu(null);
-          e.preventDefault();
-          return;
-        }
+        useRpg.getState().closePanels();
+        setFriendsOpen(false);
+        setGuideOpen(false);
+        setBoardOpen(false);
+        setMapOpen(false);
+        setMenu(null);
         setChatFocus(false);
+        e.preventDefault();
         return;
       }
       if (e.code === "Enter") {
@@ -589,9 +582,20 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
           if (id) useRpg.getState().castSkill(id);
         }
       }
-      if (e.code === "KeyE") {
+      if (e.code === "KeyZ" && !(e.ctrlKey || e.metaKey)) {
         const here = readSim();
-        openNearChest(here.x, here.z);
+        scoopLoot(here.x, here.z, true);
+      }
+      if (e.code === "KeyE") {
+        const now = performance.now();
+        const here = readSim();
+        if (now - eTap.current < 450) {
+          scoopLoot(here.x, here.z, false);
+          eTap.current = 0;
+        } else {
+          eTap.current = now;
+          openNearChest(here.x, here.z);
+        }
       }
     };
     const up = (e: KeyboardEvent) => {
@@ -757,9 +761,10 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
             <Hurt />
             <WelcomeNote />
             <NpcChoice />
-            <EdgeBar onSettings={() => setMenu((open) => (open ? null : "root"))} onFriends={() => setFriendsOpen(true)} onBoard={() => setBoardOpen((open) => !open)} onGuide={() => setGuideOpen(true)} />
+            <BossPrompt />
+            <EdgeBar onSettings={() => setMenu((open) => (open ? null : "root"))} onFriends={() => setFriendsOpen((open) => !open)} onBoard={() => setBoardOpen((open) => !open)} onGuide={() => setGuideOpen((open) => !open)} />
             <CreativeDock />
-            {menu && !friendsOpen ? <SettingsMenu mode={menu} onMode={setMenu} onClose={() => setMenu(null)} onFriends={() => setFriendsOpen(true)} /> : null}
+            {menu ? <SettingsMenu mode={menu} onMode={setMenu} onClose={() => setMenu(null)} onFriends={() => setFriendsOpen((open) => !open)} /> : null}
             <SelectBar />
             <SocialHud />
             <WhisperDock />
@@ -1223,6 +1228,35 @@ function WelcomeNote() {
   );
 }
 
+function BossPrompt() {
+  const id = useRpg((s) => s.bossPrompt);
+  if (!id) return null;
+  const boss = BOSSES.find((row) => row.id === id);
+  const name = boss?.name || "Boss";
+  return (
+    <div className="pointer-events-auto absolute inset-0 z-[70] grid place-items-center bg-black/45 p-4" data-ui onPointerDown={(e) => e.stopPropagation()}>
+      <div className="w-[min(22rem,88vw)] rounded-xl border border-gold bg-surface p-4 text-center text-fg">
+        <p className="text-sm">{name} Savaşmaya Hazır mısın?</p>
+        <div className="mt-4 flex justify-center gap-3">
+          <button
+            type="button"
+            className="rounded-md border border-gold px-4 py-2 text-sm text-gold"
+            onClick={() => {
+              useRpg.setState({ bossPrompt: null });
+              requestDungeon(id);
+            }}
+          >
+            Evet
+          </button>
+          <button type="button" className="rounded-md border border-border px-4 py-2 text-sm" onClick={() => useRpg.setState({ bossPrompt: null })}>
+            Hayır
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NpcChoice() {
   const ask = useRpg((s) => s.npcAsk);
   if (!ask) return null;
@@ -1239,7 +1273,10 @@ function NpcChoice() {
       </button>
       <button
         type="button"
-        onClick={() => useRpg.setState({ npcAsk: null, boardFor: null, boardMap: null, shop: ask as ShopKind, invOpen: true, charOpen: false })}
+        onClick={() => {
+          const now = useRpg.getState();
+          useRpg.setState({ npcAsk: null, boardFor: null, boardMap: null, shop: ask as ShopKind, invOpen: now.invOpen, charOpen: false });
+        }}
       >
         Mağazayı Aç
       </button>
@@ -1455,6 +1492,7 @@ function ChatDock() {
   const [, setTick] = useState(0);
   const open = chatFocused();
   const shown = chatOpen();
+  const alpha = chatAlpha();
   useEffect(() => {
     if (open) box.current?.focus();
   }, [open]);
@@ -1466,7 +1504,7 @@ function ChatDock() {
   if (!shown && !open) return null;
   const recent = lines.filter((line) => !line.whisper).slice(open ? -12 : -5);
   return (
-    <div data-ui className="hud-chat pointer-events-auto absolute left-1/2 z-20 -translate-x-1/2" onPointerDown={(e) => e.stopPropagation()}>
+    <div data-ui className="hud-chat pointer-events-auto absolute left-1/2 z-20 -translate-x-1/2" style={{ opacity: open ? 1 : alpha }} onPointerDown={(e) => e.stopPropagation()}>
       {recent.length > 0 ? (
         <div className={`chat-log mb-1 max-h-28 overflow-hidden rounded-md px-2 py-1.5 ${open ? "bg-bg/80" : "bg-bg/35"}`}>
           {recent.map((line) => (
@@ -1697,11 +1735,15 @@ function Hotbar() {
           else useRpg.setState({ toast: "Envanterinde yer yok" });
         }}
         onDragStart={(e) => {
+          setBagDrag(true);
           setCarry({ kind: "pot", pot: "hp" });
           e.dataTransfer.setData("text/plain", "pot:hp");
-          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.effectAllowed = "copyMove";
         }}
-        onDragEnd={() => setCarry(null)}
+        onDragEnd={() => {
+          setCarry(null);
+          setBagDrag(false);
+        }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();
@@ -1735,11 +1777,15 @@ function Hotbar() {
           else useRpg.setState({ toast: "Envanterinde yer yok" });
         }}
         onDragStart={(e) => {
+          setBagDrag(true);
           setCarry({ kind: "pot", pot: "mp" });
           e.dataTransfer.setData("text/plain", "pot:mp");
-          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.effectAllowed = "copyMove";
         }}
-        onDragEnd={() => setCarry(null)}
+        onDragEnd={() => {
+          setCarry(null);
+          setBagDrag(false);
+        }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();
@@ -1876,12 +1922,10 @@ function SettingsMenu({ mode, onMode, onClose, onFriends }: { mode: "root" | "op
   const gfx = useSyncExternalStore(subscribeGfx, readGfx, readGfx);
   const live = useSyncExternalStore(subscribeGfx, effectiveGfx, effectiveGfx);
   const music = useSyncExternalStore(subscribeMusic, readMusic, readMusic);
-  const panelOpen = useRpg((s) => s.charOpen || s.invOpen || Boolean(s.shop));
   useEffect(() => {
     loadGfx();
     loadMusic();
   }, []);
-  if (panelOpen) return null;
   const go = (run: () => void) => {
     onClose();
     run();
@@ -2048,7 +2092,14 @@ function BoardWindow({ onClose }: { onClose: () => void }) {
     let live = true;
     void leaderboard()
       .then((data) => {
-        if (live) setRows(data);
+        if (live) {
+          setRows(data);
+          if (new Date().getDay() !== 1) return;
+          const ranked = data.slice().sort((a, b) => b.level - a.level || b.kills - a.kills);
+          const nick = useRpg.getState().nick.trim().toLocaleLowerCase("tr");
+          const me = ranked.findIndex((row) => row.name.toLocaleLowerCase("tr") === nick);
+          if (me >= 0 && me < 3) claimWeekly(me + 1);
+        }
       })
       .catch(() => {
         if (live) setRows([]);
@@ -2071,6 +2122,7 @@ function BoardWindow({ onClose }: { onClose: () => void }) {
         <div>
           <p className="text-[10px] tracking-[0.28em] text-gold/80">ABİS</p>
           <p className="font-display text-xl text-gold">Sıralama</p>
+          <p className="text-[11px] text-muted">Haftalık · Pazartesi ilk 3: +10 / 10.000, +6 / 7.000, +3 / 5.000</p>
         </div>
         <div className="board-actions">
           <button type="button" className="win-x" aria-label="Kapat" onClick={onClose}>
@@ -2184,11 +2236,12 @@ const GUIDE = [
   ["Artı basma", "Demirciye yalnız ekipmanı sürükle. Güç taşı ve yükseltme taşı çantadan kendisi gelir. +6 ve +10 ayrı görevdir. +10 için seviye 70 gerekir."],
   ["Efsun", "Mistik Efsun eşyanın üstüne sürüklenir, en fazla 5 özellik. Mistik Değiştirici aynı eşyanın efsununu yeniler."],
   ["Yetenek", "5. seviyeden önce alınmaz. Sınıfının ustasına uğramadan puan harcanmaz. Usta sarı okla durur. İlk puan bir ağacı kilitler."],
-  ["Boss", "Bosslar haritada gezmez. Mavi halkadan geçince havadaki yuvarlak zemine çıkarsın. 5 dalga: 3, 3, 3, 4 yaratık, sonra yalnız boss. Bitince kapının önüne dönersin. Kapı tekrar girilir."],
+  ["Boss", "Bosslar duvardaki kapının önünde durur. Tıklayınca hazır mısın diye sorar. Evet dersen havadaki zemine çıkarsın. 5 dalga: 3, 3, 3, 4 yaratık, sonra yalnız boss. Ölünce sandık envantere gelir, 10 saniye sonra kapıya dönersin."],
   ["Ünvan", "Mob kestikçe derece birikir. İsminin yanında, seviyenin sağında yazar. 1000 Acemi, 3000 Deneyimli, 8000 Usta, 12000 Ajan, 15000 Abis Kahramanı."],
 ];
 
 function GuideBook({ onClose }: { onClose: () => void }) {
+  const [open, setOpen] = useState<string | null>(null);
   return (
     <div data-ui className="guide-sheet hud-window pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
       <div className="friend-head">
@@ -2203,8 +2256,10 @@ function GuideBook({ onClose }: { onClose: () => void }) {
       <div className="guide-list">
         {GUIDE.map(([title, body]) => (
           <article key={title}>
-            <h3>{title}</h3>
-            <p>{body}</p>
+            <button type="button" className="w-full text-left" onClick={() => setOpen((cur) => (cur === title ? null : title))}>
+              <h3>{title}</h3>
+            </button>
+            {open === title ? <p>{body}</p> : null}
           </article>
         ))}
       </div>
@@ -2768,6 +2823,19 @@ function Tip({ item, x, y }: { item: Item; x: number; y: number }) {
 
 function ItemMark({ item }: { item: Item | null }) {
   if (!item) return null;
+  const icon =
+    item.id === "demir-cevher"
+      ? "/items/demir.png"
+      : item.id === "altin-cevher"
+        ? "/items/altin.png"
+        : item.id === "gumus-cevher"
+          ? "/items/gumus.png"
+          : item.id === "bakir-cevher"
+            ? "/items/bakir.png"
+            : item.id === "guc-tasi"
+              ? "/items/guc-tasi.png"
+              : "";
+  if (icon) return <img src={icon} alt="" className="mb-0.5 h-7 w-7 object-contain" draggable={false} />;
   const style = item.kind === "mat" || item.kind === "potion" || item.kind === "fish" || item.kind === "bag" ? item.kind : weaponStyleOf(item.id);
   return (
     <svg viewBox="0 0 24 24" className="mb-0.5 h-6 w-6 text-gold" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
@@ -2900,6 +2968,8 @@ function Inventory({ docked = false }: { docked?: boolean }) {
     };
   }, []);
   const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const tabTimer = useRef(0);
+  const [split, setSplit] = useState<{ index: number; max: number; n: string } | null>(null);
   const show = (item: Item | null, ev: MouseEvent) => {
     if (!item) return;
     setTip({ item, x: ev.clientX, y: ev.clientY });
@@ -2937,6 +3007,7 @@ function Inventory({ docked = false }: { docked?: boolean }) {
     keepCarry = false;
     dragSold = false;
     setCarry(null);
+    setBagDrag(false);
   };
   return (
     <section
@@ -2984,9 +3055,10 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                 onClick={() => it && useRpg.getState().unequip(slot)}
                 onDoubleClick={() => it && useRpg.getState().unequip(slot)}
                 onDragStart={(e) => {
+                  setBagDrag(true);
                   setCarry({ kind: "slot", slot });
                   e.dataTransfer.setData("text/plain", `slot:${slot}`);
-                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.effectAllowed = "copyMove";
                 }}
                 onDragEnd={(e) => {
                   const under = document.elementFromPoint(e.clientX, e.clientY);
@@ -2997,6 +3069,7 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                   dragSold = false;
                   keepCarry = false;
                   setCarry(null);
+                  setBagDrag(false);
                 }}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
@@ -3030,11 +3103,15 @@ function Inventory({ docked = false }: { docked?: boolean }) {
               else useRpg.setState({ toast: "Çanta dolu" });
             }}
             onDragStart={(e) => {
+              setBagDrag(true);
               setCarry({ kind: "bag", index: -1 });
               e.dataTransfer.setData("text/plain", "mount:1");
-              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.effectAllowed = "copyMove";
             }}
-            onDragEnd={() => setCarry(null)}
+            onDragEnd={() => {
+              setCarry(null);
+              setBagDrag(false);
+            }}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault();
@@ -3060,13 +3137,13 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                 onClick={() => setPage(n)}
                 onDragEnter={(e) => {
                   e.preventDefault();
+                  window.clearTimeout(tabTimer.current);
                   if (n * PAGE_SIZE >= open) return;
-                  if (n !== page) setPage(n);
+                  tabTimer.current = window.setTimeout(() => setPage(n), 1000);
                 }}
+                onDragLeave={() => window.clearTimeout(tabTimer.current)}
                 onDragOver={(e) => {
                   e.preventDefault();
-                  if (n * PAGE_SIZE >= open) return;
-                  if (n !== page) setPage(n);
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
@@ -3099,10 +3176,15 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                   draggable={!!it && !locked}
                   className={locked ? "octo-slot is-lock" : "octo-slot"}
                   onMouseEnter={(e) => show(it, e)}
-                  onMouseMove={(e) => show(it, e)}
+                  onMouseMove={(e) => {
+                    const live = locked ? null : (useRpg.getState().bag[index] ?? null);
+                    if (live) setTip({ item: live, x: e.clientX, y: e.clientY });
+                    else setTip(null);
+                  }}
                   onMouseLeave={() => setTip(null)}
-                  onClick={() => {
+                  onClick={(e) => {
                     if (locked) useRpg.setState({ toast: "Slotlar kapalı. Envanter genişletme ile slotları açabilirsiniz." });
+                    else if (e.shiftKey && it && (it.count ?? 1) > 1) setSplit({ index, max: it.count ?? 1, n: "1" });
                     else if (it && (it.id === "kazma" || it.id === "olta")) useRpg.getState().equipFromBag(index);
                   }}
                   onDoubleClick={() => {
@@ -3114,11 +3196,14 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                     e.stopPropagation();
                     if (locked || !it) return;
                     useRpg.getState().equipFromBag(index);
+                    const live = useRpg.getState().bag[index];
+                    setTip(live ? { item: live, x: e.clientX, y: e.clientY } : null);
                   }}
                   onDragStart={(e) => {
+                    setBagDrag(true);
                     setCarry({ kind: "bag", index });
                     e.dataTransfer.setData("text/plain", `bag:${index}`);
-                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.effectAllowed = "copyMove";
                   }}
                   onDragEnd={(e) => release(index, e)}
                   onDragOver={(e) => e.preventDefault()}
@@ -3186,7 +3271,34 @@ function Inventory({ docked = false }: { docked?: boolean }) {
       <button type="button" className="mt-3 w-full rounded-md border border-gold px-2 py-1.5 text-xs text-gold" onClick={() => useRpg.getState().tidyBag()}>
         Envanteri düzenle
       </button>
-      <p className="mt-1 text-[11px] text-muted">Sol çift tık veya sağ tık kuşanır ve çıkarır.</p>
+      <p className="mt-1 text-[11px] text-muted">Sol çift tık veya sağ tık kuşanır ve çıkarır. Shift+sol tık yığını böler.</p>
+      {split ? (
+        <div className="mt-2 rounded-md border border-gold bg-bg/80 p-2 text-xs">
+          <p className="mb-1 text-gold">Kaç adet bölünsün?</p>
+          <input
+            className="w-full rounded-md border border-border bg-bg px-2 py-1"
+            inputMode="numeric"
+            value={split.n}
+            onChange={(e) => setSplit({ ...split, n: e.target.value.replace(/[^\d]/g, "") })}
+          />
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-gold px-2 py-1 text-gold"
+              onClick={() => {
+                useRpg.getState().splitStack(split.index, Number(split.n));
+                setSplit(null);
+                setTip(null);
+              }}
+            >
+              Tamam
+            </button>
+            <button type="button" className="rounded-md border border-border px-2 py-1" onClick={() => setSplit(null)}>
+              Vazgeç
+            </button>
+          </div>
+        </div>
+      ) : null}
       {tip ? <Tip item={tip.item} x={tip.x} y={tip.y} /> : null}
     </section>
   );
@@ -3263,6 +3375,9 @@ function Character() {
           Kapat
         </button>
       </div>
+      {charTab === "stats" ? (
+        <p className="mb-2 text-xs text-muted">Ünvan puanı {fame}</p>
+      ) : null}
       {charTab === "stats" && rank ? (
         <p className={rank.glow ? "rank-name is-glow -mt-2 mb-2 text-sm" : "rank-name -mt-2 mb-2 text-sm"} style={{ color: rank.color }}>
           {rank.name}
@@ -3867,96 +3982,49 @@ function TradeShop({ kind }: { kind: Exclude<ShopKind, "smith" | "depot" | "guar
 }
 
 function DepotShop() {
-  const bag = useRpg((s) => s.bag);
   const depot = useRpg((s) => s.depot);
-  const stage = useRpg((s) => s.bagStage);
-  const [page, setPage] = useState(0);
   const [depotPage, setDepotPage] = useState(0);
   const [tip, setTip] = useState<{ item: Item; x: number; y: number } | null>(null);
-  const open = openBagCount(stage);
-  const start = page * PAGE_SIZE;
   const depotPages = Math.max(1, Math.ceil(depot.length / PAGE_SIZE));
   const depotSafe = Math.min(depotPage, depotPages - 1);
   const depotStart = depotSafe * PAGE_SIZE;
   return (
-    <Shell title="Depo" className="w-[min(36rem,96vw)]">
-      <p className="mb-2 text-xs text-muted">Açık çantanı sürükle. Depo ayrı durur.</p>
-      <div className="mb-2 flex gap-1">
-        {Array.from({ length: Math.ceil(bag.length / PAGE_SIZE) }, (_, n) => (
-          <button key={n} type="button" className={n === page ? "rounded-md border border-gold px-2 py-1 text-xs text-gold" : "rounded-md border border-border px-2 py-1 text-xs"} onClick={() => setPage(n)}>
-            {["I", "II", "III", "IV", "V", "VI"][n] ?? n + 1}
-          </button>
-        ))}
+    <Shell title="Depo" className="w-[min(28rem,96vw)]">
+      <p className="mb-2 text-xs text-muted">Envanterden sürükle. Tıklayınca çantaya döner.</p>
+      <div className="grid grid-cols-4 gap-1" onDragOver={(e) => e.preventDefault()}>
+        {depot.slice(depotStart, depotStart + PAGE_SIZE).map((item, offset) => {
+          const index = depotStart + offset;
+          return (
+            <button
+              key={index}
+              type="button"
+              draggable={!!item}
+              className="min-h-11 rounded-md border border-border bg-bg p-1 text-left text-[10px]"
+              onDragStart={(e) => {
+                setBagDrag(true);
+                e.dataTransfer.setData("text/plain", `depot:${index}`);
+                e.dataTransfer.effectAllowed = "copyMove";
+              }}
+              onDragEnd={() => setBagDrag(false)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const token = readCarry();
+                const raw = e.dataTransfer.getData("text/plain");
+                const from = token?.kind === "bag" ? token.index : raw.startsWith("bag:") ? Number(raw.slice(4)) : -1;
+                if (from >= 0) useRpg.getState().deposit(from);
+              }}
+              onClick={() => item && useRpg.getState().withdraw(index)}
+              onMouseEnter={(e) => item && setTip({ item, x: e.clientX, y: e.clientY })}
+              onMouseLeave={() => setTip(null)}
+            >
+              {item ? <ItemMark item={item} /> : null}
+              {item ? displayName(item) : ""}
+            </button>
+          );
+        })}
       </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <div>
-          <p className="mb-1 text-xs text-gold">Çanta</p>
-          <div className="grid grid-cols-4 gap-1">
-            {Array.from({ length: PAGE_SIZE }, (_, i) => {
-              const index = start + i;
-              const item = index < open ? bag[index] ?? null : null;
-              const locked = index >= open;
-              return (
-                <button
-                  key={index}
-                  type="button"
-                  draggable={!!item}
-                  className="min-h-11 rounded-md border border-border bg-bg p-1 text-left text-[10px]"
-                  onDragStart={(e) => {
-                    if (!item) return;
-                    setCarry({ kind: "bag", index });
-                    e.dataTransfer.setData("text/plain", `bag:${index}`);
-                  }}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const raw = e.dataTransfer.getData("text/plain");
-                    if (raw.startsWith("depot:")) useRpg.getState().withdraw(Number(raw.slice(6)));
-                  }}
-                  onClick={() => item && useRpg.getState().deposit(index)}
-                  onMouseEnter={(e) => item && setTip({ item, x: e.clientX, y: e.clientY })}
-                  onMouseLeave={() => setTip(null)}
-                >
-                  {locked ? "Kilit" : item ? `${displayName(item)}${item.count && item.count > 1 ? ` x${item.count}` : ""}` : ""}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <div>
-          <p className="mb-1 text-xs text-gold">Depo</p>
-          <div className="grid grid-cols-4 gap-1" onDragOver={(e) => e.preventDefault()}>
-            {depot.slice(depotStart, depotStart + PAGE_SIZE).map((item, offset) => {
-              const index = depotStart + offset;
-              return (
-              <button
-                key={index}
-                type="button"
-                draggable={!!item}
-                className="min-h-11 rounded-md border border-border bg-bg p-1 text-left text-[10px]"
-                onDragStart={(e) => {
-                  e.dataTransfer.setData("text/plain", `depot:${index}`);
-                }}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const token = readCarry();
-                  const raw = e.dataTransfer.getData("text/plain");
-                  const from = token?.kind === "bag" ? token.index : raw.startsWith("bag:") ? Number(raw.slice(4)) : -1;
-                  if (from >= 0) useRpg.getState().deposit(from);
-                }}
-                onClick={() => item && useRpg.getState().withdraw(index)}
-                onMouseEnter={(e) => item && setTip({ item, x: e.clientX, y: e.clientY })}
-                onMouseLeave={() => setTip(null)}
-              >
-                {item ? displayName(item) : ""}
-              </button>
-              );
-            })}
-          </div>
-          <PageRow page={depotSafe} pages={depotPages} onPage={setDepotPage} />
-        </div>
-      </div>
+      <PageRow page={depotSafe} pages={depotPages} onPage={setDepotPage} />
       {tip ? <Tip item={tip.item} x={tip.x} y={tip.y} /> : null}
     </Shell>
   );
@@ -4011,7 +4079,7 @@ function SmithSlot({ which, title, item, onDrop }: { which: "item" | "stone" | "
         }
         setCarry({ kind: "smith", which });
         e.dataTransfer.setData("text/plain", `smith:${which}`);
-        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.effectAllowed = "copyMove";
       }}
       onDragEnd={() => {
         const token = readCarry();
