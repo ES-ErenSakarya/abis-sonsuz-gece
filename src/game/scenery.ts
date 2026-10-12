@@ -731,6 +731,9 @@ export function buildVillage(textures) {
 	outpost("out-koy2", "İkinci Köy alanı", 0, 420, "#6a7a4a", "koy2");
 	outpost("out-dolunay", "Dolunay alanı", 420, 0, "#3d4e68", "dolunay");
 	outpost("out-ay", "Sonsuz Ay alanı", -420, 0, "#2a2438", "ay");
+	outpost("out-abis", "Abis Gezegeni alanı", 0, -420, "#3a2858", "abis");
+	outpost("out-kanli", "Kanlı Ay alanı", 420, 420, "#6a2430", "kanli");
+	outpost("out-kiyamet", "Kıyamet alanı", -420, 420, "#4a3018", "kiyamet");
 	const lake = new THREE.Mesh(
 		keep(new THREE.CircleGeometry(LAKE.r, 40)),
 		keep(new THREE.MeshStandardMaterial({ color: "#1a6e78", roughness: 0.22, metalness: 0.35, transparent: true, opacity: 0.92 })),

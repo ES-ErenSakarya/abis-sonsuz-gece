@@ -46,57 +46,42 @@ function beginExit(kind: "char" | "out") {
 }
 
 function EdgeIcon({ kind }: { kind: "stat" | "skill" | "bag" | "friend" | "gear" | "board" | "mail" }) {
-  const common = { fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
-  if (kind === "stat") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M5 19V10M12 19V5M19 19v-7" {...common} />
-      </svg>
-    );
-  }
-  if (kind === "skill") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 3.5 14.4 9l5.6.4-4.3 3.6 1.4 5.5L12 15.8 6.9 18.5 8.3 13 4 9.4 9.6 9Z" {...common} />
-      </svg>
-    );
-  }
-  if (kind === "bag") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M7 8h10l-1 12H8L7 8Z" {...common} />
-        <path d="M9 8V6.5A3 3 0 0 1 12 3.5 3 3 0 0 1 15 6.5V8" {...common} />
-      </svg>
-    );
-  }
-  if (kind === "friend") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="9" cy="9" r="2.4" {...common} />
-        <circle cx="16" cy="10" r="2" {...common} />
-        <path d="M4.5 18.5c.6-2.4 2.4-3.6 4.5-3.6s3.9 1.2 4.5 3.6M14 15.2c1.4-.3 2.8.2 3.6 1.6" {...common} />
-      </svg>
-    );
-  }
-  if (kind === "mail") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M4 7h16v10H4zM4 7l8 6 8-6" {...common} />
-      </svg>
-    );
-  }
-  if (kind === "board") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M7 20h10M8 16h8M9 4h6l1 8H8L9 4Z" {...common} />
-      </svg>
-    );
-  }
+  const src =
+    kind === "stat"
+      ? "/ui/statu.png"
+      : kind === "skill"
+        ? "/ui/skill.png"
+        : kind === "bag"
+          ? "/ui/envanter.png"
+          : kind === "friend"
+            ? "/ui/dost.png"
+            : kind === "mail"
+              ? "/ui/mektup.png"
+              : kind === "board"
+                ? "/ui/leaderboard.png"
+                : "/ui/ayarlar.png";
+  return <img src={src} alt="" className="edge-ico" draggable={false} />;
+}
+function GoldInline({ n }: { n: number | string }) {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="3" {...common} />
-      <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18" {...common} />
-    </svg>
+    <span className="gold-inline">
+      <img src="/ui/gold.png" alt="" draggable={false} />
+      <span>{n}</span>
+    </span>
+  );
+}
+
+function GoldLine({ line }: { line: string }) {
+  const re = /(\d[\d.]*)(\s*(?:altın\w*|Altın\w*|Gold)\b)/;
+  const m = line.match(re);
+  if (!m || m.index == null) return <>{line}</>;
+  const i = m.index;
+  return (
+    <>
+      {line.slice(0, i)}
+      <GoldInline n={m[1] ?? ""} />
+      {line.slice(i + (m[1]?.length ?? 0))}
+    </>
   );
 }
 import { effectiveGfx, GFX_PRESETS, loadGfx, readGfx, subscribeGfx, writeGfx, type GfxPreset } from "@/game/settings";
@@ -482,6 +467,12 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
     const save = () => {
       void saveCharacter({ data: { id: activeId, save: captureSave() } }).catch(() => undefined);
     };
+    let stage = useRpg.getState().bagStage;
+    const unsub = useRpg.subscribe((state) => {
+      if (state.bagStage === stage) return;
+      stage = state.bagStage;
+      save();
+    });
     const id = window.setInterval(save, 4000);
     const hide = () => {
       if (document.visibilityState === "hidden") save();
@@ -489,6 +480,7 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
     window.addEventListener("pagehide", save);
     document.addEventListener("visibilitychange", hide);
     return () => {
+      unsub();
       window.clearInterval(id);
       window.removeEventListener("pagehide", save);
       document.removeEventListener("visibilitychange", hide);
@@ -513,7 +505,6 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
         return;
       }
       if (MOVE_KEYS.has(e.code)) {
-        if (bagDragging()) return;
         input.keys.add(e.code);
         e.preventDefault();
         return;
@@ -599,24 +590,37 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
       }
     };
     const up = (e: KeyboardEvent) => {
+      if (bagDragging() && (MOVE_KEYS.has(e.code) || e.code === "ShiftLeft" || e.code === "ShiftRight")) return;
       input.keys.delete(e.code);
     };
     const blur = () => {
+      if (bagDragging()) return;
       input.keys.clear();
       input.joyX = 0;
       input.joyY = 0;
       input.look = false;
       input.sprint = false;
     };
+    const dragShift = (e: Event) => {
+      if (!bagDragging()) return;
+      const drag = e as globalThis.DragEvent;
+      if (drag.shiftKey) input.keys.add("ShiftLeft");
+      else {
+        input.keys.delete("ShiftLeft");
+        input.keys.delete("ShiftRight");
+      }
+    };
     const blockMenu = (e: Event) => e.preventDefault();
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", blur);
+    window.addEventListener("dragover", dragShift);
     window.addEventListener("contextmenu", blockMenu);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", blur);
+      window.removeEventListener("dragover", dragShift);
       window.removeEventListener("contextmenu", blockMenu);
     };
   }, []);
@@ -1353,7 +1357,7 @@ function SelectBar() {
     );
   }
   if (duel.phase !== "live" && duel.phase !== "sent") return null;
-  const label = sel ? (sel.kind === "mob" ? sel.name : `${sel.nick} · Sv.${sel.level}`) : `${duel.nick} · Sv.${duel.level}`;
+  const label = !sel ? `${duel.nick} · Sv.${duel.level}` : sel.kind === "player" ? `${sel.nick} · Sv.${sel.level}` : sel.name;
   const vs = duel.phase === "live" ? "VS" : "Teklif gitti";
   return (
     <div data-ui className="pointer-events-auto absolute top-16 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-border bg-surface/95 px-3 py-2">
@@ -1421,7 +1425,7 @@ function SocialHud() {
         <p className="mb-2 text-[11px] text-muted">Envanterden eşyayı kendi pencerenin üstüne sürükle. Altın da ekleyebilirsin. İki taraf kabul edince takas olur.</p>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <p className="mb-1 text-xs text-gold">Sen · {trade.mineGold || 0} altın</p>
+            <p className="mb-1 text-xs text-gold">Sen · <GoldInline n={trade.mineGold || 0} /></p>
             <form
               className="mb-1 flex gap-1"
               onSubmit={(e) => {
@@ -1447,7 +1451,7 @@ function SocialHud() {
             </button>
           </div>
           <div>
-            <p className="mb-1 text-xs text-gold">{social.nick} · {trade.theirGold || 0} altın</p>
+            <p className="mb-1 text-xs text-gold">{social.nick} · <GoldInline n={trade.theirGold || 0} /></p>
             <div className="flex flex-col gap-1">
               {trade.theirs.length === 0 ? cell(null) : trade.theirs.map((item) => <div key={item.uid}>{cell(item)}</div>)}
             </div>
@@ -1882,7 +1886,7 @@ function QuestTracker({ open }: { open: boolean }) {
             <p className="text-[11px] text-muted">{quest.detail}</p>
             <p className="text-[11px] text-muted">{quest.done || quest.have >= quest.need ? `${giverLabel(questGiver(questBoardRow(quest)))} teslim alır` : `${Math.min(quest.have, quest.need)}/${quest.need}`}</p>
             <p className="text-[11px] text-gold">
-              {quest.xpReward ?? 0} XP · {quest.goldReward ?? 0} altın
+              {quest.xpReward ?? 0} XP · <GoldInline n={quest.goldReward ?? 0} />
             </p>
             {preview ? (
               <p
@@ -2083,11 +2087,29 @@ const BOARD_TABS = [
   ["damage", "Verilen Hasar Sıralaması"],
 ] as const;
 
+function weekRemain(now = new Date()) {
+  const next = new Date(now);
+  next.setHours(0, 0, 0, 0);
+  const add = (8 - next.getDay()) % 7 || 7;
+  next.setDate(next.getDate() + add);
+  const sec = Math.max(0, Math.floor((next.getTime() - now.getTime()) / 1000));
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return `${d} gün ${h} saat ${m} dakika ${s} saniye`;
+}
+
 function BoardWindow({ onClose }: { onClose: () => void }) {
   const nick = useRpg((s) => s.nick);
   const [rows, setRows] = useState<BoardRow[] | null>(null);
   const [tab, setTab] = useState<(typeof BOARD_TABS)[number][0]>("level");
   const [query, setQuery] = useState("");
+  const [left, setLeft] = useState(() => weekRemain());
+  useEffect(() => {
+    const id = window.setInterval(() => setLeft(weekRemain()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
   useEffect(() => {
     let live = true;
     void leaderboard()
@@ -2122,7 +2144,8 @@ function BoardWindow({ onClose }: { onClose: () => void }) {
         <div>
           <p className="text-[10px] tracking-[0.28em] text-gold/80">ABİS</p>
           <p className="font-display text-xl text-gold">Sıralama</p>
-          <p className="text-[11px] text-muted">Haftalık · Pazartesi ilk 3: +10 / 10.000, +6 / 7.000, +3 / 5.000</p>
+          <p className="text-[11px] text-muted">Haftalık geri sayım: {left}</p>
+          <p className="text-[11px] text-muted">Pazartesi ilk 3: +10 / 10.000, +6 / 7.000, +3 / 5.000</p>
         </div>
         <div className="board-actions">
           <button type="button" className="win-x" aria-label="Kapat" onClick={onClose}>
@@ -2337,7 +2360,20 @@ function WorldMap({ zone, big, onToggle }: { zone: string; big: boolean; onToggl
     const cx = s / 2;
     const cy = s / 2;
     const k = s / (half * 2);
-    const fill = realm.id === "dolunay" ? "#3d4e62" : realm.id === "ay" ? "#2c2638" : realm.id === "koy2" ? "#5d6e48" : "#6d7c58";
+    const fill =
+      realm.id === "dolunay"
+        ? "#3d4e62"
+        : realm.id === "ay"
+          ? "#2c2638"
+          : realm.id === "koy2"
+            ? "#5d6e48"
+            : realm.id === "abis"
+              ? "#2a2044"
+              : realm.id === "kanli"
+                ? "#5a2430"
+                : realm.id === "kiyamet"
+                  ? "#3a2818"
+                  : "#6d7c58";
     g.beginPath();
     g.arc(cx, cy, bound * k, 0, Math.PI * 2);
     g.fillStyle = fill;
@@ -2436,15 +2472,17 @@ function WorldMap({ zone, big, onToggle }: { zone: string; big: boolean; onToggl
       >
         <span className="relative block overflow-hidden rounded-lg border border-border" style={{ width: size, height: size }}>
           <canvas ref={canvasRef} className="block h-full w-full" />
-          <span
-            className="absolute z-10 h-0 w-0"
+          <img
+            src="/ui/ok.png"
+            alt=""
+            draggable={false}
+            className="absolute z-10 object-contain"
             style={{
               left: px,
               top: py,
+              width: Math.max(16, size * 0.11),
+              height: Math.max(28, size * 0.28),
               transform: `translate(-50%, -50%) rotate(${deg}deg)`,
-              borderLeft: "5px solid transparent",
-              borderRight: "5px solid transparent",
-              borderBottom: "11px solid #7eb6ff",
             }}
             onMouseEnter={(e) => {
               e.stopPropagation();
@@ -2666,7 +2704,7 @@ function StallBrowse() {
             onMouseLeave={() => setTip(null)}
           >
             <ItemMark item={row.item} />
-            <span className="slot-price">{row.price}</span>
+            <span className="slot-price"><img src="/ui/gold.png" alt="" draggable={false} />{row.price}</span>
           </button>
         ))}
         {rows.length === 0 ? <p className="col-span-4 text-xs text-muted">Tezgahta eşya yok.</p> : null}
@@ -2805,7 +2843,9 @@ function Tip({ item, x, y }: { item: Item; x: number; y: number }) {
       </p>
       {rows.length ? <p>{rows.join(" · ")}</p> : null}
       {item.count && item.count > 1 ? <p>Adet {item.count}</p> : null}
-      {item.req ? <p className="text-muted">Gerekli seviye {item.req}</p> : null}
+      {item.id === "kazma" || !item.kind || item.kind === "gear" || item.kind === "tool" ? (
+        <p className="text-muted">Gerekli seviye {item.id === "kazma" ? 8 : Math.max(item.req ?? 1, item.level || 1)}</p>
+      ) : null}
       {item.desc ? <p className="mt-1 text-muted">{item.desc}</p> : null}
       {item.enchants?.length ? (
         <div className="mt-1 border-t border-border pt-1">
@@ -2824,7 +2864,9 @@ function Tip({ item, x, y }: { item: Item; x: number; y: number }) {
 function ItemMark({ item }: { item: Item | null }) {
   if (!item) return null;
   const icon =
-    item.id === "demir-cevher"
+    item.id === "starter-bow"
+      ? "/items/baslangic-yayi.png"
+      : item.id === "demir-cevher"
       ? "/items/demir.png"
       : item.id === "altin-cevher"
         ? "/items/altin.png"
@@ -2909,7 +2951,13 @@ function CenterAsk() {
       onPointerDown={(e) => e.stopPropagation()}
     >
       <div className="w-[min(22rem,88vw)] rounded-xl border border-gold bg-surface p-4 text-center text-fg">
-        <p className="whitespace-pre-line text-sm leading-snug">{ask.text}</p>
+        <p className="text-sm leading-snug">
+          {ask.text.split("\n").map((line, i) => (
+            <span key={i} className="block">
+              <GoldLine line={line} />
+            </span>
+          ))}
+        </p>
         <div className="mt-4 flex justify-center gap-3">
           <button
             type="button"
@@ -3033,7 +3081,7 @@ function Inventory({ docked = false }: { docked?: boolean }) {
             <p className="inv-kicker">ABİS</p>
             <h2 className="font-display text-lg text-gold">Envanter</h2>
           </div>
-          <span className="inv-gold">{gold}</span>
+          <span className="inv-gold"><GoldInline n={gold} /></span>
           <button type="button" className="win-x" aria-label="Kapat" onClick={() => useRpg.setState({ invOpen: false })}>
             ×
           </button>
@@ -3583,7 +3631,7 @@ function QuestBoard() {
       ) : offer ? (
         <div className="rounded-md border border-border bg-bg p-2 text-sm break-words">
           <p className="text-gold">{offer.title || offer.name}</p>
-          <p className="text-muted">{offer.name}. Sv.{offer.min} · {offer.xp} XP · {offer.gold} altın</p>
+          <p className="text-muted">{offer.name}. Sv.{offer.min} · {offer.xp} XP · <GoldInline n={offer.gold} /></p>
           <button type="button" className="mt-2 rounded-md border border-gold px-3 py-2 text-gold" onClick={() => useRpg.getState().takeGiverQuest()}>
             Görevi al
           </button>
@@ -3609,29 +3657,34 @@ function QuestBoard() {
 function GateBoard() {
   const here = readSim();
   const gold = useRpg((s) => s.gold);
+  const level = useRpg((s) => s.level);
   const realm = realmAt(here.x, here.z);
   return (
     <Shell title="Işınlayıcı" className="w-[min(24rem,92vw)]">
-      <p className="mb-2 text-xs text-muted">Şu an: {realm.name} · {gold} altın</p>
+      <p className="mb-2 text-xs text-muted">Şu an: {realm.name} · <GoldInline n={gold} /></p>
       <div className="flex flex-col gap-2">
-        {REALMS.map((row) => (
-          <button
-            key={row.id}
-            type="button"
-            className="rounded-md border border-border px-3 py-2 text-left text-sm disabled:opacity-40"
-            disabled={row.id === realm.id}
-            onClick={() =>
-              openAsk(`Bu map için ${GATE_COST[row.id]} Gold harcamanız gerekiyor, emin misiniz?`, () => {
-                useRpg.getState().travel(row.id);
-              })
-            }
-          >
-            <span className="text-gold">{row.name}</span>
-            <span className="ml-2 text-muted">
-              Sv.{row.min}–{row.max} · {GATE_COST[row.id]} altın
-            </span>
-          </button>
-        ))}
+        {REALMS.map((row) => {
+          const locked = level < row.min;
+          return (
+            <button
+              key={row.id}
+              type="button"
+              className="rounded-md border border-border px-3 py-2 text-left text-sm disabled:opacity-40"
+              disabled={row.id === realm.id || locked}
+              onClick={() =>
+                openAsk(`Bu map için ${GATE_COST[row.id]} Gold harcamanız gerekiyor, emin misiniz?`, () => {
+                  useRpg.getState().travel(row.id);
+                })
+              }
+            >
+              <span className="text-gold">{row.name}</span>
+              <span className="ml-2 text-muted">
+                Sv.{row.min}–{row.max} · <GoldInline n={GATE_COST[row.id]} />
+                {locked ? ` · Sv.${row.min} gerekir` : ""}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </Shell>
   );
@@ -3671,7 +3724,7 @@ function StallShop() {
             {row ? (
               <>
                 <ItemMark item={row.item} />
-                <span className="slot-count">{row.price}</span>
+                <span className="slot-price"><img src="/ui/gold.png" alt="" draggable={false} />{row.price}</span>
               </>
             ) : (
               <span className="text-muted">Boş</span>
@@ -3835,7 +3888,7 @@ function BazaarShop() {
   };
   return (
     <Shell title="Hızlı Pazar" className="w-[min(22rem,92vw)]">
-      <p className="mb-2 text-sm text-gold">{gold} Altın</p>
+      <p className="mb-2 text-sm text-gold"><GoldInline n={gold} /></p>
       <p className="mb-2 text-xs text-muted">Yalnızca şu an oyundaki diğer oyuncuların pazarları. Sağ tık ya da Yanına Al.</p>
       <input className="mb-2 w-full rounded-md border border-border bg-bg px-2 py-1 text-sm" placeholder="Ara" value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} />
       <div className="flex flex-col gap-2 overflow-hidden">
@@ -3851,7 +3904,7 @@ function BazaarShop() {
             <ItemMark item={row.listing.item} />
             <span className="min-w-0">
               <span className="block break-words text-gold">{displayName(row.listing.item)}</span>
-              <span className="block text-[11px] text-muted">{row.nick} · {row.listing.price} altın</span>
+              <span className="block text-[11px] text-muted">{row.nick} · <GoldInline n={row.listing.price} /></span>
             </span>
             <button type="button" className="rounded-md border border-gold px-2 py-1 text-xs text-gold" onClick={() => buy(row)}>
               Yanına Al
@@ -3878,7 +3931,7 @@ function CraftShop() {
   const view = rows.slice(safe * SHOP_PAGE, safe * SHOP_PAGE + SHOP_PAGE);
   return (
     <Shell title="Üretim" className="w-[min(22rem,92vw)]">
-      <p className="mb-2 text-sm text-gold">{gold} Altın · Sv.{level}</p>
+      <p className="mb-2 text-sm text-gold"><GoldInline n={gold} /> · Sv.{level}</p>
       <p className="mb-2 text-xs text-muted">30. seviyeden sonra maden, boss ganimeti ve altınla üretilir.</p>
       <ClassChips value={klass} onChange={(id) => { setKlass(id); setPage(0); }} />
       <div className="flex flex-col gap-2 overflow-hidden">
@@ -3893,7 +3946,7 @@ function CraftShop() {
             <div key={row.id} className="rounded-md border border-border bg-bg px-2 py-2 text-sm">
               <p className="break-words text-gold">{row.name}</p>
               <p className="text-[11px] text-muted">{row.forClass === "hepsi" ? "Bütün Karakterler Kuşanabilir" : row.forClass === "savasci" ? "Savaşçı" : row.forClass === "okcu" ? "Okçu" : row.forClass === "buyucu" ? "Büyücü" : "Ninja"} · Sv.{row.req}</p>
-              <p className="break-words text-xs">{ores} · {row.gold} altın</p>
+              <p className="break-words text-xs">{ores} · <GoldInline n={row.gold} /></p>
               <button type="button" disabled={!ready} className="mt-1 rounded-md border border-gold px-3 py-1 text-xs text-gold disabled:opacity-40" onClick={() => useRpg.getState().craftItem(row.id)}>
                 Üret
               </button>
@@ -3929,7 +3982,7 @@ function TradeShop({ kind }: { kind: Exclude<ShopKind, "smith" | "depot" | "guar
   const view = rows.slice(safe * SHOP_PAGE, safe * SHOP_PAGE + SHOP_PAGE);
   return (
     <Shell title={SHOP_TITLE[kind] ?? "Dükkan"} className="w-[min(22rem,92vw)]" vendor>
-      <p className="mb-2 text-sm text-gold">{gold} Altın</p>
+      <p className="mb-2 text-sm text-gold"><GoldInline n={gold} /></p>
       <p className="mb-2 text-xs text-muted">Eşyayı bu pencereye bırak. Altına çevrilir.</p>
       <div className="mb-2 flex flex-wrap gap-1">
         {tabs.map((row) => (
@@ -3958,14 +4011,17 @@ function TradeShop({ kind }: { kind: Exclude<ShopKind, "smith" | "depot" | "guar
               </span>
               <span className="text-gold">
                 {creative ? (
-                  <input
-                    type="number"
-                    className="w-16 rounded border border-border bg-bg px-1 text-gold"
-                    value={price}
-                    onChange={(e) => rememberPrice(row.id, Math.max(0, Number(e.target.value) || 0))}
-                  />
+                  <span className="gold-inline">
+                    <img src="/ui/gold.png" alt="" draggable={false} />
+                    <input
+                      type="number"
+                      className="w-16 rounded border border-border bg-bg px-1 text-gold"
+                      value={price}
+                      onChange={(e) => rememberPrice(row.id, Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  </span>
                 ) : (
-                  `${price}g`
+                  <GoldInline n={price} />
                 )}
               </span>
               <button type="button" disabled={gold < price} className="rounded-md border border-border px-3 py-2 disabled:opacity-40" onClick={() => useRpg.getState().buy(row.id)}>
@@ -4046,7 +4102,7 @@ function SmithShop() {
   };
   return (
     <Shell title="Demirci" className="w-[min(36rem,96vw)]">
-      <p className="mb-2 text-sm text-gold">{gold} Altın</p>
+      <p className="mb-2 text-sm text-gold"><GoldInline n={gold} /></p>
       <p className="mb-2 text-xs text-muted">Yalnızca eşyayı sürükle. Güç taşı ve yükseltme taşı envanterde varsa kendiliğinden yerleşir. +6 öncesi her taş olur. Tutmazsa taş durur, tekrar basılır.</p>
       <div className="grid grid-cols-3 gap-2">
         <SmithSlot which="item" title="+ Basılacak" item={item} onDrop={(raw) => take("item", raw)} />
@@ -4054,7 +4110,7 @@ function SmithShop() {
         <SmithSlot which="mat" title={need ? need.name : "Malzeme"} item={mat} onDrop={(raw) => take("mat", raw)} />
       </div>
       <p className="mt-3 text-xs text-muted">
-        {cost ? `${cost} altın` : "—"}
+        {cost ? <GoldInline n={cost} /> : "—"}
         {stone ? " · Güç taşı +35" : " · Taşsız"}
         {need ? ` · ${need.name} gerekir` : ""}
       </p>

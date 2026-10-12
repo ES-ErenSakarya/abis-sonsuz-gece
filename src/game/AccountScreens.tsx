@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { GROK_PROVIDERS, authClient, signIn } from "@/lib/auth/client";
 import { UserButton } from "@/lib/auth/gates";
@@ -261,7 +261,26 @@ export function CharacterScreens() {
     };
   }, []);
 
+  const playing = useHud((s) => s.playing);
   const ready = useHud((s) => s.ready);
+  const seenPlay = useRef(false);
+  useEffect(() => {
+    if (playing) {
+      seenPlay.current = true;
+      return;
+    }
+    if (!seenPlay.current) return;
+    let dead = false;
+    setRows(null);
+    void listCharacters()
+      .then((list) => {
+        if (!dead) setRows(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      dead = true;
+    };
+  }, [playing]);
   const play = (row: CharacterRow) => {
     if (!useHud.getState().ready) return;
     applySave(row);

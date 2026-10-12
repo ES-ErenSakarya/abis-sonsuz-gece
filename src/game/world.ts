@@ -523,6 +523,15 @@ export const VEINS = [
   { x: -505, z: 36 },
   { x: -348, z: 70 },
   { x: -470, z: -78 },
+  { x: 86, z: -500 },
+  { x: -70, z: -350 },
+  { x: 40, z: -540 },
+  { x: 510, z: 470 },
+  { x: 340, z: 360 },
+  { x: 490, z: 330 },
+  { x: -340, z: 490 },
+  { x: -510, z: 350 },
+  { x: -470, z: 510 },
 ];
 
 export type OreKind = "demir" | "bakir" | "gumus" | "altin";
@@ -571,10 +580,13 @@ export function retireVein(x: number, z: number) {
 
 export type MeteorSpot = { id: string; level: number; x: number; z: number; realm: string };
 const METEOR_TABLE: { realm: (typeof REALMS)[number]["id"]; levels: number[] }[] = [
-  { realm: "koy", levels: [5, 10, 15] },
-  { realm: "koy2", levels: [20, 25, 30] },
-  { realm: "dolunay", levels: [35, 40, 45] },
-  { realm: "ay", levels: [55, 65, 75, 85, 90] },
+  { realm: "koy", levels: [8] },
+  { realm: "koy2", levels: [22] },
+  { realm: "dolunay", levels: [36] },
+  { realm: "ay", levels: [52] },
+  { realm: "abis", levels: [65] },
+  { realm: "kanli", levels: [75] },
+  { realm: "kiyamet", levels: [90] },
 ];
 
 export function meteorSpots(): MeteorSpot[] {
@@ -600,7 +612,10 @@ export const REALMS = [
   { id: "koy", name: "Ana Köy", x: 0, z: 0, min: 1, max: 10 },
   { id: "koy2", name: "İkinci Köy", x: 0, z: 420, min: 10, max: 25 },
   { id: "dolunay", name: "Dolunay", x: 420, z: 0, min: 25, max: 40 },
-  { id: "ay", name: "Sonsuz Ay", x: -420, z: 0, min: 40, max: 55 },
+  { id: "ay", name: "Sonsuz Ay", x: -420, z: 0, min: 40, max: 60 },
+  { id: "abis", name: "Abis Gezegeni", x: 0, z: -420, min: 60, max: 70 },
+  { id: "kanli", name: "Kanlı Ay", x: 420, z: 420, min: 70, max: 80 },
+  { id: "kiyamet", name: "Kıyamet", x: -420, z: 420, min: 80, max: 99 },
 ] as const;
 
 export function realmAt(x: number, z: number) {
@@ -645,6 +660,16 @@ const CAMP_LAYOUT = [
   { id: "golem", level: 46, realm: "ay", a: 2.1 },
   { id: "bat", level: 50, realm: "ay", a: 3.6 },
   { id: "wraith", level: 54, realm: "ay", a: 5.0 },
+  { id: "ifrit", level: 58, realm: "ay", a: 1.15 },
+  { id: "knight", level: 62, realm: "abis", a: 0.4 },
+  { id: "abyss", level: 65, realm: "abis", a: 2.2 },
+  { id: "sentinel", level: 68, realm: "abis", a: 4.0 },
+  { id: "blood", level: 72, realm: "kanli", a: 0.5 },
+  { id: "drake", level: 75, realm: "kanli", a: 2.3 },
+  { id: "hangman", level: 78, realm: "kanli", a: 4.2 },
+  { id: "night", level: 84, realm: "kiyamet", a: 0.6 },
+  { id: "doom", level: 90, realm: "kiyamet", a: 2.4 },
+  { id: "end", level: 95, realm: "kiyamet", a: 4.1 },
 ] as const;
 
 export type CampSpawn = {

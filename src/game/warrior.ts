@@ -94,11 +94,13 @@ export function captureRest(model: THREE.Object3D): RestPose {
     return A.getWorldPosition(new THREE.Vector3()).distanceTo(B.getWorldPosition(new THREE.Vector3()));
   };
   const footY = (name: string) => (model.getObjectByName(name) as THREE.Bone).getWorldPosition(new THREE.Vector3()).y;
+  const feet = Math.min(footY("LeftFoot"), footY("RightFoot"));
+  const parentY = model.parent ? model.parent.getWorldPosition(new THREE.Vector3()).y : 0;
   return {
     quat,
     pos,
     groundY: model.position.y,
-    footClear: Math.min(footY("LeftFoot"), footY("RightFoot")),
+    footClear: feet - parentY,
     l1: len("LeftArm", "LeftForeArm"),
     l2: len("LeftForeArm", "LeftHand"),
     r1: len("RightArm", "RightForeArm"),
@@ -601,7 +603,8 @@ export function poseFighter(
       bone(model, "LeftFoot")!.getWorldPosition(_p).y,
       bone(model, "RightFoot")!.getWorldPosition(_a).y,
     );
-    model.position.y -= fy - rest.footClear;
+    const parentY = model.parent ? model.parent.getWorldPosition(_b).y : 0;
+    model.position.y -= fy - (parentY + rest.footClear);
     if (run > 0.2 && moving) model.position.y += Math.abs(Math.sin(cycle * 2)) ** 2 * 0.02 * run;
   }
 }

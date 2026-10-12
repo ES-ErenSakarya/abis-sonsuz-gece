@@ -6,6 +6,7 @@ import { queueGroundDrop } from "@/game/field";
 
 export type Sel =
   | { kind: "mob"; id: string; name: string }
+  | { kind: "meteor"; id: string; name: string; level: number }
   | { kind: "player"; id: string; nick: string; level: number };
 
 export type DuelPhase = "idle" | "sent" | "in" | "live";

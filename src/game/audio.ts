@@ -3,6 +3,9 @@ const TRACKS: Record<string, string> = {
   koy2: "/audio/koy2.mp3",
   dolunay: "/audio/dolunay.mp3",
   ay: "/audio/sonsuz-ay.mp3",
+  abis: "/audio/sonsuz-ay.mp3",
+  kanli: "/audio/dolunay.mp3",
+  kiyamet: "/audio/sonsuz-ay.mp3",
 };
 
 const HITS: Record<string, string> = {

@@ -53,7 +53,11 @@ function splitInvested(raw: unknown): {
   friends: { id: string; nick: string; level: number }[];
 } {
   const obj = asJson<Record<string, unknown>>(raw, {});
-  const num = (key: string) => (typeof obj[key] === "number" ? (obj[key] as number) : 0);
+  const num = (key: string) => {
+    const value = obj[key];
+    const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+    return Number.isFinite(n) ? n : 0;
+  };
   const skills: Record<string, number> = {};
   const extra = obj.skills;
   if (extra && typeof extra === "object") {
@@ -82,7 +86,7 @@ function splitInvested(raw: unknown): {
     quests,
     depot,
     blocked,
-    bagStage: num("bagStage"),
+    bagStage: Math.max(0, Math.min(8, Math.floor(num("bagStage")))),
     wellAt: num("wellAt"),
     bonusUntil: num("bonusUntil"),
     x: typeof obj.x === "number" && Number.isFinite(obj.x) ? obj.x : undefined,
@@ -221,7 +225,7 @@ export const setDeletePassword = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
-export const listCharacters = createServerFn({ method: "GET" })
+export const listCharacters = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {
     const sql = await getSql();
@@ -355,7 +359,7 @@ export const saveCharacter = createServerFn({ method: "POST" })
           quests: save.quests ?? [],
           depot: save.depot ?? [],
           blocked: save.blocked ?? [],
-          bagStage: save.bagStage ?? 0,
+          bagStage: Math.max(0, Math.min(8, Math.floor(Number(save.bagStage) || 0))),
           wellAt: save.wellAt ?? 0,
           bonusUntil: save.bonusUntil ?? 0,
           x: typeof save.x === "number" ? save.x : undefined,

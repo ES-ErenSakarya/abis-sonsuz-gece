@@ -797,6 +797,72 @@ export const SPECIES = [
 		scale: 1.5,
 		form: "drake",
 		speed: 1.7
+	},
+	{
+		id: "abyss",
+		name: "Abis Solucanı",
+		level: 65,
+		hp: 480,
+		tint: "#3a1848",
+		belly: "#c080e0",
+		scale: 1.15,
+		form: "snake",
+		speed: 1.6
+	},
+	{
+		id: "sentinel",
+		name: "Gezegen Gözcüsü",
+		level: 68,
+		hp: 620,
+		tint: "#4a3a68",
+		belly: "#b0a0d0",
+		scale: 1.3,
+		form: "golem",
+		speed: 1.15
+	},
+	{
+		id: "blood",
+		name: "Kan Avcısı",
+		level: 72,
+		hp: 540,
+		tint: "#6a1820",
+		belly: "#e07070",
+		scale: 1.1,
+		form: "biped",
+		speed: 1.65
+	},
+	{
+		id: "hangman",
+		name: "Ay Celladı",
+		level: 78,
+		hp: 640,
+		tint: "#3a1018",
+		belly: "#a03040",
+		scale: 1.2,
+		form: "biped",
+		speed: 1.5
+	},
+	{
+		id: "doom",
+		name: "Kıyamet Atlısı",
+		level: 90,
+		hp: 780,
+		tint: "#2a2018",
+		belly: "#e07030",
+		scale: 1.4,
+		form: "drake",
+		speed: 1.55
+	},
+	{
+		id: "end",
+		name: "Son Muhafız",
+		level: 95,
+		hp: 900,
+		tint: "#1a1412",
+		belly: "#8a8070",
+		scale: 1.45,
+		form: "golem",
+		speed: 1.2
 	}
 ];
 function mesh(geo, mat) {

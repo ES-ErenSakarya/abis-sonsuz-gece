@@ -581,6 +581,9 @@
 }
 
 .inv-gold {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
   border: 1px solid rgba(214, 184, 122, 0.4);
   border-radius: 999px;
   background: rgba(201, 161, 91, 0.12);
@@ -590,9 +593,26 @@
   font-variant-numeric: tabular-nums;
 }
 
-.inv-gold::after {
-  content: " altın";
-  color: #c9a15b;
+.gold-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  vertical-align: middle;
+}
+
+.gold-inline img,
+.inv-gold img {
+  width: 1.05rem;
+  height: 1.05rem;
+  object-fit: contain;
+  flex: none;
+}
+
+.edge-btn img.edge-ico {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
 }
 
 .equip-board {
@@ -658,9 +678,18 @@
 }
 
 .slot-price {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
   font-size: 10px;
   line-height: 1;
   color: #e2b45a;
+}
+
+.slot-price img {
+  width: 0.85rem;
+  height: 0.85rem;
+  object-fit: contain;
 }
 
 .xp-tip {
@@ -1059,13 +1088,14 @@ html[data-touch] .hud-map.is-big {
 
 .edge-btn {
   display: grid;
-  width: 2.85rem;
-  height: 2.85rem;
+  width: 3.15rem;
+  height: 3.15rem;
   place-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 0.55rem;
-  background: color-mix(in oklab, var(--color-surface) 92%, transparent);
+  border: none;
+  border-radius: 0.45rem;
+  background: transparent;
   color: var(--color-fg);
+  padding: 0;
   touch-action: manipulation;
 }
 
@@ -1075,14 +1105,14 @@ html[data-touch] .hud-map.is-big {
 }
 
 .edge-btn.is-round {
-  border-radius: 999px;
-  border-color: var(--color-gold);
+  border: none;
+  border-radius: 0.45rem;
   color: var(--color-gold);
 }
 
 html[data-touch] .edge-btn {
-  width: 3.2rem;
-  height: 3.2rem;
+  width: 2.65rem;
+  height: 2.65rem;
 }
 
 .welcome-note,

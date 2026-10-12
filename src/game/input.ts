@@ -302,7 +302,6 @@ let bagDrag = false;
 
 export function setBagDrag(on: boolean) {
   bagDrag = on;
-  if (on) releaseMoveKeys();
 }
 
 export function bagDragging() {

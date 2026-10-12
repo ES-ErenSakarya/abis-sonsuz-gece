@@ -8,8 +8,8 @@ import { amHost, broadcastStall, chestView, closeChest, emitHit, expireLoot, fie
 import { useHud } from "@/game/hudStore";
 import { viewport } from "@/game/viewport";
 import { axes, held, input, sim, takeHop } from "@/game/input";
-import { BOSSES, MENTORS, bossChestItem, commitSkill, meteorLoot, questGuide, rankOf, refundSkill, rollKillLoot, takeCast, tryReceiveItem, useRpg, weaponStyleOf, enchantView, type Item, type NearKind, type WeaponStyle } from "@/game/rpg";
-import { beginRun, bindDungeonEnter, dungeonNow, endRun } from "@/game/dungeon";
+import { BOSSES, MENTORS, bossChestItem, commitSkill, meteorLoot, questGuide, rankOf, refundSkill, rollKillLoot, takeCast, takeLevelPing, tryReceiveItem, useRpg, weaponStyleOf, enchantView, type Item, type NearKind, type WeaponStyle } from "@/game/rpg";
+import { arenaFloor, beginRun, bindDungeonEnter, dungeonNow, endRun } from "@/game/dungeon";
 import { playAttack, syncRealmMusic } from "@/game/audio";
 import { effectiveGfx, loadGfx, subscribeGfx } from "@/game/settings";
 import { buildVillage, composeGround, createWeather, disposeScenery, tickGrass, tickSmoke, type SmokePuff } from "@/game/scenery";
@@ -22,6 +22,18 @@ import { mountStudio, studioHop, studioLevelBlock, studioPaintPoint, studioPaint
 import { blocked, bridgeName, campSpawns, dryLand, faceYaw, FISHER_STAND, FENCE_R, DUNGEON_BOUND, groundY, inWater, LAKE, liveVeins, meteorSpots, onPier, PLAYER_R, REALMS, realmAt, realmGate, realmHerald, slide, WELL, zoneName } from "@/game/world";
 
 const WALK_REF = 1.67;
+const ARENA_R = 22;
+const ARENA_WALK = 20.2;
+const METEOR_WAVES = [
+  { pct: 0.9, n: 3 },
+  { pct: 0.7, n: 3 },
+  { pct: 0.5, n: 6 },
+  { pct: 0.3, n: 6 },
+  { pct: 0.2, n: 8 },
+] as const;
+function meteorMaxHp(level: number) {
+  return Math.round(1100 + level * level * 7);
+}
 const _look = new THREE.Vector3();
 const _aim = new THREE.Vector3();
 const _desired = new THREE.Vector3();
@@ -853,47 +865,89 @@ function dampAngle(current: number, target: number, lambda: number, dt: number) 
   return current + diff * (1 - Math.exp(-lambda * dt));
 }
 
+function makeFlatMark(url: string, size: number) {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({
+    color: "#ffffff",
+    transparent: true,
+    opacity: 0.92,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = 0.06;
+  mesh.renderOrder = 3;
+  group.add(mesh);
+  new THREE.TextureLoader().load(url, (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    mat.map = tex;
+    mat.needsUpdate = true;
+  });
+  return group;
+}
+
+function makeIconSprite(url: string, w: number, h: number) {
+  const mat = new THREE.SpriteMaterial({ transparent: true, depthWrite: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(w, h, 1);
+  sprite.renderOrder = 4;
+  new THREE.TextureLoader().load(url, (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    mat.map = tex;
+    mat.needsUpdate = true;
+  });
+  return sprite;
+}
+
+const levelArt = new Image();
+levelArt.src = "/ui/level-up.png";
+
+function makeLevelBadge(level: number) {
+  const mat = new THREE.SpriteMaterial({ transparent: true, depthWrite: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(1.55, 1.55, 1);
+  sprite.renderOrder = 5;
+  const paint = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, 512, 512);
+    ctx.drawImage(levelArt, 0, 0, 512, 512);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 16;
+    ctx.strokeStyle = "rgba(18, 8, 28, 0.9)";
+    ctx.font = "700 150px Georgia, serif";
+    ctx.strokeText(String(level), 256, 262);
+    ctx.fillStyle = "#f6f1ff";
+    ctx.fillText(String(level), 256, 262);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    mat.map = tex;
+    mat.needsUpdate = true;
+  };
+  if (levelArt.complete && levelArt.naturalWidth > 0) paint();
+  else levelArt.addEventListener("load", paint, { once: true });
+  return sprite;
+}
+
 function makeSelectRing() {
-  const ring = new THREE.Group();
+  const ring = makeFlatMark("/ui/isaretci.png", 1.45);
   ring.name = "select-ring";
-  const band = new THREE.Mesh(
-    new THREE.RingGeometry(0.62, 0.7, 48),
-    new THREE.MeshBasicMaterial({
-      color: "#e23b3b",
-      transparent: true,
-      opacity: 0.92,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-    }),
-  );
-  band.rotation.x = -Math.PI / 2;
-  band.position.y = 0.02;
-  ring.add(band);
-  ring.position.y = 0.03;
   return ring;
 }
 
 function makeQuestGuide() {
   const arrow = new THREE.Group();
   arrow.name = "quest-arrow";
-  const head = new THREE.Mesh(
-    new THREE.ConeGeometry(0.16, 0.42, 8),
-    new THREE.MeshBasicMaterial({ color: "#e6c36a", depthWrite: false, transparent: true, opacity: 0.96 }),
-  );
-  head.rotation.x = Math.PI;
-  head.position.y = 0.2;
-  arrow.add(head);
-  const beacon = new THREE.Group();
+  arrow.add(makeIconSprite("/ui/npc-ok.png", 0.62, 0.84));
+  const beacon = makeFlatMark("/ui/isaretci.png", 1.35);
   beacon.name = "quest-beacon";
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.55, 0.74, 24),
-    new THREE.MeshBasicMaterial({ color: "#e6c36a", transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }),
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.08;
-  beacon.add(ring);
   return { arrow, beacon };
 }
 
@@ -994,6 +1048,7 @@ function World() {
     };
   }, [gl, scene]);
   const lightRef = useRef<THREE.DirectionalLight>(null);
+  const hemiRef = useRef<THREE.HemisphereLight>(null);
   const rigRef = useRef<THREE.Group | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const actRef = useRef<Partial<Record<Gait, THREE.AnimationAction>>>({});
@@ -1017,7 +1072,8 @@ function World() {
     mesh: THREE.Object3D;
     broken: boolean;
     respawn: number;
-    guards: number;
+    wave: number;
+    pack: number;
   };
   const meteorRef = useRef<MeteorRock[]>([]);
   const chipMeteor = useRef<(rock: MeteorRock, dmg: number) => void>(() => undefined);
@@ -1042,9 +1098,9 @@ function World() {
   const levelRingRef = useRef<THREE.Mesh | null>(null);
   const floatRootRef = useRef<THREE.Group | null>(null);
   const floatMarks = useRef<{ sprite: THREE.Sprite; life: number; rise: number }[]>([]);
-  const levelSeen = useRef<number | null>(null);
   const vialsSeen = useRef<number | null>(null);
-  const levelBurst = useRef(0);
+  const levelFx = useRef<{ sprite: THREE.Sprite; life: number } | null>(null);
+  const maxBadge = useRef<THREE.Sprite | null>(null);
   const stallClock = useRef(0);
   const guestStalls = useRef<Map<string, THREE.Group>>(new Map());
   const gearRev = useRef(-1);
@@ -1117,23 +1173,43 @@ function World() {
     const makeArena = (x: number, z: number) => {
       const g = new THREE.Group();
       g.visible = false;
-      const disk = new THREE.Mesh(
-        new THREE.CylinderGeometry(12, 12.4, 0.5, 40),
-        new THREE.MeshStandardMaterial({ color: "#2c2824", roughness: 0.7, metalness: 0.16 }),
+      const floorMat = new THREE.MeshStandardMaterial({ color: "#1a1614", roughness: 0.94, metalness: 0.04 });
+      const disk = new THREE.Mesh(new THREE.CylinderGeometry(ARENA_R, ARENA_R + 0.4, 0.5, 48), floorMat);
+      disk.position.set(x, 23.68, z);
+      const inlay = new THREE.Mesh(
+        new THREE.RingGeometry(ARENA_R - 1.4, ARENA_R - 0.55, 48),
+        new THREE.MeshStandardMaterial({ color: "#3a241c", roughness: 0.8, metalness: 0.12 }),
       );
-      disk.position.set(x, 23.75, z);
-      const rim = new THREE.Mesh(
-        new THREE.TorusGeometry(11.7, 0.09, 8, 40),
-        new THREE.MeshStandardMaterial({ color: "#e2b45a", emissive: "#8a6420", emissiveIntensity: 0.45 }),
+      inlay.rotation.x = -Math.PI / 2;
+      inlay.position.set(x, 24.01, z);
+      const wallMat = new THREE.MeshStandardMaterial({ color: "#241e1b", roughness: 0.92, side: THREE.BackSide });
+      const wall = new THREE.Mesh(new THREE.CylinderGeometry(ARENA_R - 0.15, ARENA_R - 0.15, 18, 40, 1, true), wallMat);
+      wall.position.set(x, 33, z);
+      const ceil = new THREE.Mesh(
+        new THREE.CylinderGeometry(ARENA_R + 0.2, ARENA_R + 0.2, 0.7, 40),
+        new THREE.MeshStandardMaterial({ color: "#100c0a", roughness: 1, side: THREE.BackSide }),
       );
-      rim.rotation.x = Math.PI / 2;
-      rim.position.set(x, 24.02, z);
-      const wall = new THREE.Mesh(
-        new THREE.CylinderGeometry(12.15, 12.15, 3.8, 28, 1, true),
-        new THREE.MeshStandardMaterial({ color: "#4a433c", roughness: 0.86, side: THREE.DoubleSide }),
-      );
-      wall.position.set(x, 25.9, z);
-      g.add(disk, rim, wall);
+      ceil.position.set(x, 41.4, z);
+      const pillarMat = new THREE.MeshStandardMaterial({ color: "#3a332c", roughness: 0.88 });
+      const pillarGeo = new THREE.CylinderGeometry(0.55, 0.7, 8.5, 8);
+      const fireMat = new THREE.MeshBasicMaterial({ color: "#ff7a2a" });
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const px = x + Math.cos(a) * 15.2;
+        const pz = z + Math.sin(a) * 15.2;
+        const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+        pillar.position.set(px, 28.2, pz);
+        const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.22, 0.2, 8), pillarMat);
+        bowl.position.set(px, 24.7, pz);
+        const flame = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), fireMat);
+        flame.position.set(px, 24.95, pz);
+        const torch = new THREE.PointLight("#ff7a3a", 6, 11, 2);
+        torch.position.set(px, 25.4, pz);
+        g.add(pillar, bowl, flame, torch);
+      }
+      const glow = new THREE.PointLight("#6a3a28", 4, 18, 2);
+      glow.position.set(x, 28, z);
+      g.add(disk, inlay, wall, ceil, glow);
       return g;
     };
     const makeDoor = (x: number, z: number, yaw: number) => {
@@ -1158,13 +1234,27 @@ function World() {
     };
     for (const realm of REALMS) {
       const radius = realm.id === "koy" ? 210 : 190;
+      const sky =
+        realm.id === "kanli"
+          ? { color: "#4a1824", opacity: 0.7 }
+          : realm.id === "kiyamet"
+            ? { color: "#2a140c", opacity: 0.74 }
+            : realm.id === "abis"
+              ? { color: "#1a1030", opacity: 0.7 }
+              : realm.id === "ay"
+                ? { color: "#221a36", opacity: 0.62 }
+                : realm.id === "dolunay"
+                  ? { color: "#243044", opacity: 0.4 }
+                  : realm.id === "koy2"
+                    ? { color: "#7f9aaf", opacity: 0.34 }
+                    : { color: "#9ec0dc", opacity: 0.34 };
       const dome = new THREE.Mesh(
         new THREE.SphereGeometry(radius, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2.05),
         new THREE.MeshBasicMaterial({
-          color: realm.id === "ay" ? "#221a36" : realm.id === "dolunay" ? "#243044" : realm.id === "koy2" ? "#7f9aaf" : "#9ec0dc",
+          color: sky.color,
           side: THREE.BackSide,
           transparent: true,
-          opacity: realm.id === "ay" ? 0.62 : 0.34,
+          opacity: sky.opacity,
           depthWrite: false,
         }),
       );
@@ -1207,41 +1297,89 @@ function World() {
       host.add(rock, crystal);
       host.position.set(spot.x, groundY(spot.x, spot.z), spot.z);
       group.add(host);
-      const hp = 90 + spot.level * 8;
-      meteors.push({ id: spot.id, level: spot.level, realm: spot.realm, x: spot.x, z: spot.z, hp, hpMax: hp, mesh: host, broken: false, respawn: 0, guards: 0 });
+      const hp = meteorMaxHp(spot.level);
+      const pack = 700 + meteors.length;
+      meteors.push({ id: spot.id, level: spot.level, realm: spot.realm, x: spot.x, z: spot.z, hp, hpMax: hp, mesh: host, broken: false, respawn: 0, wave: 0, pack });
     }
     meteorRef.current = meteors;
-    chipMeteor.current = (rock, dmg) => {
-      if (rock.broken || dmg <= 0) return;
-      rock.hp -= dmg;
-      floatAt(rock.x, 2.3, rock.z, `${dmg}`, false);
-      if (rock.guards < 3) {
-        const spec = SPECIES.slice().sort((a, b) => Math.abs(a.level - rock.level) - Math.abs(b.level - rock.level))[0] ?? SPECIES[0];
-        const ang = Math.random() * Math.PI * 2;
-        const x = rock.x + Math.cos(ang) * 2.6;
-        const z = rock.z + Math.sin(ang) * 2.6;
-        const pack = 700 + Math.max(0, meteorRef.current.indexOf(rock));
-        const beast = createBeast(x, z, `met-${rock.id}-${rock.guards}`, pack, { ...spec, level: rock.level, name: spec.name });
+    const summonMeteor = (rock: (typeof meteors)[number], count: number) => {
+      const spec = SPECIES.slice().sort((a, b) => Math.abs(a.level - rock.level) - Math.abs(b.level - rock.level))[0] ?? SPECIES[0];
+      for (let i = 0; i < count; i++) {
+        const ang = (i / count) * Math.PI * 2 + rock.wave * 0.4;
+        const rad = 2.8 + (i % 3) * 0.85;
+        const x = rock.x + Math.cos(ang) * rad;
+        const z = rock.z + Math.sin(ang) * rad;
+        const beast = createBeast(x, z, `met-${rock.id}-${rock.wave}-${i}`, rock.pack, {
+          ...spec,
+          level: rock.level,
+          name: spec.name,
+        });
         beast.anger = true;
-        beast.roam = 0.4;
-        beast.hp = beast.hpMax = Math.round(beast.hpMax * 1.2);
+        beast.boss = false;
+        beast.roam = 0.55;
         beast.root.position.y = groundY(x, z);
         beastsRef.current.push(beast);
         group.add(beast.root);
-        rock.guards += 1;
       }
-      if (rock.hp <= 0) {
-        rock.broken = true;
-        rock.mesh.visible = false;
-        rock.respawn = 50;
-        const drops = meteorLoot(rock.level);
-        let stored = 0;
-        for (const item of drops) {
-          if (tryReceiveItem(item)) stored += 1;
-          else placeChest([item as Item], rock.x + 0.5, rock.z + 0.3);
+    };
+    const reapMeteor = (rock: (typeof meteors)[number]) => {
+      const playerLevel = useRpg.getState().level;
+      let xp = 0;
+      let gold = 0;
+      for (const beast of beastsRef.current) {
+        if (beast.pack !== rock.pack || !beast.alive) continue;
+        beast.alive = false;
+        beast.root.visible = false;
+        xp += mobXp(beast.level, false, playerLevel);
+        gold += 4 + beast.level;
+        useRpg.getState().noteKill(beast.specId, beast.level);
+      }
+      if (xp) shareXp(xp);
+      if (gold) useRpg.getState().addGold(gold);
+      if (xp || gold) floatAt(rock.x, 2.8, rock.z, `+${xp} XP · +${gold} altın`, false);
+    };
+    chipMeteor.current = (rock, dmg) => {
+      if (rock.broken || dmg <= 0) return;
+      const dealt = mitigate(rock.level, useRpg.getState().level, dmg);
+      rock.hp = Math.max(0, rock.hp - dealt);
+      floatAt(rock.x, 2.3, rock.z, `${dealt}`, false);
+      if (rock.hp > 0) {
+        const ratio = rock.hp / rock.hpMax;
+        while (rock.wave < METEOR_WAVES.length && ratio <= METEOR_WAVES[rock.wave]!.pct) {
+          summonMeteor(rock, METEOR_WAVES[rock.wave]!.n);
+          rock.wave += 1;
         }
-        systemSay(stored ? `Meteor kırıldı · ${stored} eşya` : "Meteor kırıldı, çanta dolu");
+        return;
       }
+      reapMeteor(rock);
+      rock.broken = true;
+      rock.mesh.visible = false;
+      rock.respawn = 50;
+      const dropX = rock.x;
+      const dropZ = rock.z;
+      const realm = REALMS.find((row) => row.id === rock.realm) ?? REALMS[0];
+      for (let n = 0; n < 36; n++) {
+        const ang = Math.random() * Math.PI * 2;
+        const rad = (realm.id === "koy" ? 42 : 24) + Math.random() * (realm.id === "koy" ? 100 : 90);
+        const nx = realm.x + Math.cos(ang) * rad;
+        const nz = realm.z + Math.sin(ang) * rad;
+        if (Math.hypot(nx - realm.x, nz - realm.z) < 18) continue;
+        if (Math.hypot(nx - LAKE.x, nz - LAKE.z) < LAKE.r + 3) continue;
+        if (inWater(nx, nz, 1.1)) continue;
+        if (blocked(nx, nz, 1.1)) continue;
+        if (meteorRef.current.some((row) => row !== rock && Math.hypot(row.x - nx, row.z - nz) < 16)) continue;
+        rock.x = nx;
+        rock.z = nz;
+        rock.mesh.position.set(nx, groundY(nx, nz), nz);
+        break;
+      }
+      const drops = meteorLoot(rock.level);
+      let stored = 0;
+      for (const item of drops) {
+        if (tryReceiveItem(item)) stored += 1;
+        else placeChest([item as Item], dropX + 0.5, dropZ + 0.3);
+      }
+      systemSay(stored ? `Meteor kırıldı · ${stored} eşya` : "Meteor kırıldı, çanta dolu");
     };
     const spawnDungeon = (boss: (typeof BOSSES)[number], wave: number) => {
       const spec = SPECIES.find((item) => item.id === boss.spec);
@@ -1253,7 +1391,7 @@ function World() {
       const pack = 900 + BOSSES.findIndex((item) => item.id === boss.id);
       for (let i = 0; i < n; i++) {
         const ang = (Math.PI * 2 * i) / Math.max(1, n);
-        const rad = bossWave ? 0 : 6.4;
+        const rad = bossWave ? 0 : 11;
         const x = boss.x + Math.cos(ang) * rad;
         const z = boss.z + Math.sin(ang) * rad;
         const beast = createBeast(x, z, `dun-${boss.id}-w${wave}-${i}`, pack, {
@@ -1284,7 +1422,7 @@ function World() {
     dropEnter.current = bindDungeonEnter((id) => {
       const boss = BOSSES.find((item) => item.id === id);
       if (!boss || dungeonNow() || useRpg.getState().down) return;
-      beginRun({ bossId: boss.id, wave: 1, name: boss.name }, { x: boss.x, z: boss.z, y: 24, r: 12 });
+      beginRun({ bossId: boss.id, wave: 1, name: boss.name }, { x: boss.x, z: boss.z, y: 24, r: ARENA_WALK });
       sim.x = boss.x;
       sim.z = boss.z;
       dungeonApi.current.spawn(boss, 1);
@@ -1292,13 +1430,9 @@ function World() {
     });
     const mentors = MENTORS.map((row) => {
       const mentor = createMentor(row.name, row.x, row.z, faceYaw(row.x, row.z), row.cls);
-      const arrow = new THREE.Mesh(
-        new THREE.ConeGeometry(0.14, 0.38, 8),
-        new THREE.MeshBasicMaterial({ color: "#e6c36a" }),
-      );
-      arrow.rotation.x = Math.PI;
-      arrow.position.y = 2.05;
+      const arrow = makeIconSprite("/ui/npc-ok.png", 0.62, 0.84);
       arrow.name = "skill-arrow";
+      arrow.position.y = 2.2;
       arrow.visible = false;
       mentor.root.add(arrow);
       group.add(mentor.root);
@@ -1378,6 +1512,10 @@ function World() {
     levelRing.visible = false;
     group.add(levelRing);
     levelRingRef.current = levelRing;
+    const capBadge = makeIconSprite("/ui/max-level.png", 1.25, 1.25);
+    capBadge.visible = false;
+    group.add(capBadge);
+    maxBadge.current = capBadge;
     const floatRoot = new THREE.Group();
     group.add(floatRoot);
     floatRootRef.current = floatRoot;
@@ -1710,7 +1848,11 @@ function World() {
     const beasts = herd.filter((beast) => beast.alive && cone(beast.root.position.x, beast.root.position.z));
     const cut = lockedMelee ? [lockedMelee] : aoe ? beasts : beasts.slice(0, 1);
     const dummyHit = Boolean(dummy?.alive && cone(dummy.root.position.x, dummy.root.position.z));
-    const rock = meteorRef.current.find((row) => !row.broken && cone(row.x, row.z));
+    const lockedMeteor =
+      selNow?.kind === "meteor"
+        ? meteorRef.current.find((row) => !row.broken && row.id === selNow.id && Math.hypot(row.x - sim.x, row.z - sim.z) < 3.5)
+        : null;
+    const rock = lockedMeteor ?? meteorRef.current.find((row) => !row.broken && cone(row.x, row.z));
     if (!cut.length && !dummyHit && !rock) return;
     hitLatch.current = true;
     const hit = useRpg.getState().punch();
@@ -1778,6 +1920,16 @@ function World() {
             kind: "mob",
             id: beast.id,
             name: beast.name,
+          });
+        }
+        for (const rock of meteorRef.current) {
+          if (rock.broken || !rock.mesh.visible) continue;
+          const by = rock.mesh.position.y;
+          consider(cylinderT(_picker.ray, rock.x, rock.z, 1.35, by, by + 2.35), {
+            kind: "meteor",
+            id: rock.id,
+            name: `Meteor Taşı · Sv.${rock.level}`,
+            level: rock.level,
           });
         }
         for (const [id, body] of remotes) {
@@ -1957,7 +2109,7 @@ function World() {
       const tz = mark?.z ?? 0;
       const showAt = (x: number, z: number, y: number) => {
         guide.arrow.visible = true;
-        guide.arrow.position.set(x, y, z);
+        guide.arrow.position.set(x, y + Math.sin(lifeRef.current * 3.2) * 0.16, z);
         guide.arrow.rotation.set(0, 0, 0);
         guide.beacon.visible = true;
         guide.beacon.position.set(x, groundY(x, z) + 0.02, z);
@@ -2037,7 +2189,7 @@ function World() {
     const style: WeaponStyle = weaponStyleOf(rpg.equipped.weapon?.id);
     const tooling = style === "kazma" || style === "olta" || rpg.chore != null;
     const ranged = style === "bow" || style === "staff";
-    const marked = readTarget().sel?.kind === "mob";
+    const marked = readTarget().sel?.kind === "mob" || readTarget().sel?.kind === "meteor";
     const spaceDown = playing && held("Space") && !tooling && !rpg.down && (!ranged || marked);
     const pressed = spaceDown && !spaceWas.current;
     spaceWas.current = spaceDown;
@@ -2111,14 +2263,21 @@ function World() {
           _look.set(p.x - origin.x, p.y + 1.05 - origin.y, p.z - origin.z);
         } else _look.set(fxw, 0.04, fzw);
         const shot = useRpg.getState().punch();
-        const rock = meteorRef.current.find((row) => {
-          if (row.broken) return false;
-          const dx = row.x - sim.x;
-          const dz = row.z - sim.z;
-          const dist = Math.hypot(dx, dz);
-          if (dist > 16 || dist < 0.4) return false;
-          return (dx * fxw + dz * fzw) / dist > 0.8;
-        });
+        const pickedMeteor =
+          sel?.kind === "meteor"
+            ? meteorRef.current.find((row) => !row.broken && row.id === sel.id && Math.hypot(row.x - sim.x, row.z - sim.z) < 16)
+            : null;
+        const rock =
+          pickedMeteor ??
+          meteorRef.current.find((row) => {
+            if (row.broken) return false;
+            const dx = row.x - sim.x;
+            const dz = row.z - sim.z;
+            const dist = Math.hypot(dx, dz);
+            if (dist > 16 || dist < 0.4) return false;
+            return (dx * fxw + dz * fzw) / dist > 0.72;
+          });
+        if (rock && !mark) _look.set(rock.x - origin.x, rock.mesh.position.y + 1.1 - origin.y, rock.z - origin.z);
         if (rock) chipMeteor.current(rock, shot.dmg);
         if (style === "bow") combatRef.current?.fireArrow(origin, _look, shot.dmg, shot.crit, home);
         else if (style === "staff") combatRef.current?.fireBolt(origin, _look, shot.dmg, shot.crit, home);
@@ -2257,10 +2416,7 @@ function World() {
         if (!arrow) continue;
         const row = MENTORS.find((item) => item.name === mentor.name);
         arrow.visible = Boolean(showSkillMarks && row && row.cls === rpgNow.classId);
-        if (arrow.visible) {
-          arrow.position.set(0, 1.82, 0);
-          arrow.rotation.set(Math.PI, 0, 0);
-        }
+        if (arrow.visible) arrow.position.y = 2.15 + Math.sin(lifeRef.current * 3.2 + mentor.root.position.x) * 0.16;
       }
       if (host) {
         const budget = effectiveGfx();
@@ -2464,7 +2620,7 @@ function World() {
             } else if (boss) {
               bossLeave.current = 0;
               dungeonApi.current.clear(pack);
-              beginRun({ bossId: boss.id, wave: run.wave + 1, name: boss.name }, { x: boss.x, z: boss.z, y: 24, r: 12 });
+              beginRun({ bossId: boss.id, wave: run.wave + 1, name: boss.name }, { x: boss.x, z: boss.z, y: 24, r: ARENA_WALK });
               dungeonApi.current.spawn(boss, run.wave + 1);
               useRpg.setState({ toast: run.wave + 1 === 5 ? `${boss.name} geliyor` : `Dalga ${run.wave + 1}` });
             }
@@ -2473,9 +2629,9 @@ function World() {
             const dx = sim.x - boss.x;
             const dz = sim.z - boss.z;
             const dist = Math.hypot(dx, dz) || 1;
-            if (dist > 11.1) {
-              sim.x = boss.x + (dx / dist) * 11.1;
-              sim.z = boss.z + (dz / dist) * 11.1;
+            if (dist > ARENA_WALK) {
+              sim.x = boss.x + (dx / dist) * ARENA_WALK;
+              sim.z = boss.z + (dz / dist) * ARENA_WALK;
             }
           }
         }
@@ -2485,9 +2641,14 @@ function World() {
         if (!rock.broken) continue;
         rock.respawn -= dt;
         if (rock.respawn > 0) continue;
+        for (const beast of beastsRef.current) {
+          if (beast.pack !== rock.pack || !beast.alive) continue;
+          beast.alive = false;
+          beast.root.visible = false;
+        }
         rock.broken = false;
         rock.hp = rock.hpMax;
-        rock.guards = 0;
+        rock.wave = 0;
         rock.mesh.visible = true;
       }
       for (const beast of beastsRef.current) stepPuppet(beast, dt);
@@ -2553,7 +2714,6 @@ function World() {
           mount.rotation.y = sim.yaw + Math.PI;
         }
       }
-      const seenLv = rider.level;
       const seenVials = rider.vials;
       const pushMark = (kind: "star" | "vial", text: string) => {
         const root = floatRootRef.current;
@@ -2562,20 +2722,47 @@ function World() {
         root.add(sprite);
         floatMarks.current.push({ sprite, life: 1.8, rise: 0 });
       };
-      if (levelSeen.current == null) {
-        levelSeen.current = seenLv;
-        vialsSeen.current = seenVials;
-      } else if (seenLv > levelSeen.current) {
-        levelSeen.current = seenLv;
-        vialsSeen.current = seenVials;
-        levelBurst.current = 1;
-        pushMark("star", String(seenLv));
-      } else {
-        levelSeen.current = seenLv;
-        if (vialsSeen.current != null && seenVials > vialsSeen.current) pushMark("vial", "+");
-        vialsSeen.current = seenVials;
+      if (vialsSeen.current == null) vialsSeen.current = seenVials;
+      else if (seenVials > vialsSeen.current) pushMark("vial", "+");
+      vialsSeen.current = seenVials;
+      const ping = playing ? takeLevelPing() : 0;
+      if (ping > 0) {
+        const prev = levelFx.current;
+        if (prev) {
+          const old = prev.sprite.material as THREE.SpriteMaterial;
+          prev.sprite.parent?.remove(prev.sprite);
+          old.map?.dispose();
+          old.dispose();
+        }
+        const sprite = makeLevelBadge(ping);
+        hostRef.current?.add(sprite);
+        levelFx.current = { sprite, life: 2.6 };
       }
-      const gy = groundY(sim.x, sim.z);
+      const badge = levelFx.current;
+      const gy = groundY(sim.x, sim.z, true);
+      if (badge) {
+        badge.life -= dt;
+        const sprite = badge.sprite;
+        if (badge.life <= 0) {
+          const old = sprite.material as THREE.SpriteMaterial;
+          sprite.parent?.remove(sprite);
+          old.map?.dispose();
+          old.dispose();
+          levelFx.current = null;
+        } else {
+          sprite.visible = true;
+          sprite.position.set(sim.x, gy + 2.2, sim.z);
+          const pop = badge.life > 2.25 ? (2.6 - badge.life) / 0.35 : 1;
+          sprite.scale.setScalar(1.55 * Math.min(1, pop));
+          (sprite.material as THREE.SpriteMaterial).opacity = Math.min(1, badge.life);
+        }
+      }
+      const cap = maxBadge.current;
+      if (cap) {
+        const showCap = playing && rider.level >= 99 && !levelFx.current;
+        cap.visible = showCap;
+        if (showCap) cap.position.set(sim.x, gy + 2.35 + Math.sin(lifeRef.current * 2.6) * 0.14, sim.z);
+      }
       for (let i = floatMarks.current.length - 1; i >= 0; i--) {
         const mark = floatMarks.current[i]!;
         mark.life -= dt;
@@ -2589,17 +2776,6 @@ function World() {
           mat.dispose();
           floatMarks.current.splice(i, 1);
         }
-      }
-      const burst = levelRingRef.current;
-      if (burst) {
-        if (levelBurst.current > 0) {
-          levelBurst.current = Math.max(0, levelBurst.current - dt * 0.55);
-          burst.visible = true;
-          const k = 1 - levelBurst.current;
-          burst.position.set(sim.x, groundY(sim.x, sim.z) + 0.08, sim.z);
-          burst.scale.setScalar(1 + k * 3.4);
-          (burst.material as THREE.MeshBasicMaterial).opacity = levelBurst.current * 0.85;
-        } else burst.visible = false;
       }
       if (smith) smith.root.position.y = groundY(smith.root.position.x, smith.root.position.z);
       for (const mentor of mentorsRef.current) {
@@ -2675,6 +2851,29 @@ function World() {
           };
           focus = true;
         }
+      } else if (sel?.kind === "meteor") {
+        const rock = meteorRef.current.find((row) => row.id === sel.id && !row.broken);
+        if (rock) {
+          card = {
+            name: "Meteor Taşı",
+            hp: rock.hp,
+            hpMax: rock.hpMax,
+            level: rock.level,
+            drops: ["Yükseltme taşı", "Güç Taşı", "Ekipman"],
+          };
+          focus = true;
+          paintMob(
+            camera,
+            "mob-meteor",
+            `Meteor Taşı · Sv.${rock.level}`,
+            rock.hp,
+            rock.hpMax,
+            rock.x,
+            rock.mesh.position.y + 2.7,
+            rock.z,
+            true,
+          );
+        }
       } else if (duel.phase === "live" && sel?.kind === "player" && sel.id === duel.id) {
         const foe = remotes.get(sel.id);
         if (foe) {
@@ -2683,6 +2882,7 @@ function World() {
         }
       }
       setMobCard(focus ? card : null);
+      if (sel?.kind !== "meteor") paintMob(camera, "mob-meteor", "", 0, 1, 0, 0, 0, false);
       const targets: ShotTarget[] = [];
       if (dummy?.alive) targets.push({ id: "dummy", x: dummy.root.position.x, y: 1.25, z: dummy.root.position.z, alive: true });
       for (const beast of beasts) {
@@ -2755,6 +2955,7 @@ function World() {
       paintMob(camera, "mob-dummy", "", 0, 1, 0, 0, 0, false);
       paintMob(camera, "mob-beast", "", 0, 1, 0, 0, 0, false);
       paintMob(camera, "mob-focus", "", 0, 1, 0, 0, 0, false);
+      paintMob(camera, "mob-meteor", "", 0, 1, 0, 0, 0, false);
     }
     const showFx = effectiveGfx().effects;
     if (showFx) tickGrass(dt);
@@ -2807,9 +3008,10 @@ function World() {
         Math.cos(ang) * Math.cos(pitch) * dist,
       );
     } else {
+      const pit = arenaFloor();
       const yaw = input.orbit;
       const pitch = Math.max(-0.45, Math.min(1.15, input.pitch));
-      const dist = Math.max(3.4, Math.min(11, input.dist || 5.6));
+      const dist = Math.max(3.4, Math.min(pit ? 6.4 : 11, input.dist || 5.6));
       const gy = groundY(sim.x, sim.z, true);
       const horiz = Math.cos(pitch);
       const lookY = gy + 1.35;
@@ -2817,6 +3019,18 @@ function World() {
       if (camY < gy + 0.45) camY = gy + 0.45;
       _look.set(sim.x, lookY, sim.z);
       _desired.set(sim.x + Math.sin(yaw) * horiz * dist, camY, sim.z + Math.cos(yaw) * horiz * dist);
+      if (pit) {
+        const dx = _desired.x - pit.x;
+        const dz = _desired.z - pit.z;
+        const flat = Math.hypot(dx, dz) || 1;
+        const maxR = Math.max(1.4, pit.r - 0.7);
+        if (flat > maxR) {
+          _desired.x = pit.x + (dx / flat) * maxR;
+          _desired.z = pit.z + (dz / flat) * maxR;
+        }
+        const capY = pit.y + 12.2;
+        if (_desired.y > capY) _desired.y = capY;
+      }
     }
     const followK = playing ? 8 : 1.6;
     if (snap) _cam.copy(_desired);
@@ -2826,7 +3040,14 @@ function World() {
     syncViewmodel(camera, scene, false, style, fx?.swing ?? 0, moving, sim.phase, lifeRef.current, false, false, fpRef);
 
     const light = lightRef.current;
+    const inside = Boolean(dungeonNow());
+    const hemi = hemiRef.current;
+    if (hemi) hemi.intensity = inside ? 0.05 : 0.72;
+    if (inside) {
+      if (!scene.fog) scene.fog = new THREE.Fog("#100c0a", 9, 30);
+    } else if (scene.fog) scene.fog = null;
     if (light) {
+      light.intensity = inside ? 0.16 : 1.7;
       const focusX = playing ? sim.x : 0;
       const focusZ = playing ? sim.z : 0;
       const gy = groundY(focusX, focusZ, true);
@@ -3012,6 +3233,14 @@ function World() {
         scale = sel.id === "dummy" ? 1.05 : 1.25;
         show = true;
       } else setSelection(null);
+    } else if (playing && sel?.kind === "meteor") {
+      const rock = meteorRef.current.find((row) => row.id === sel.id && !row.broken);
+      if (rock) {
+        x = rock.x;
+        z = rock.z;
+        scale = 1.2;
+        show = true;
+      } else setSelection(null);
     } else if (playing && sel?.kind === "player") {
       const body = remotes.get(sel.id);
       if (body) {
@@ -3037,12 +3266,10 @@ function World() {
       live.position.set(x, groundY(x, z) + 0.04, z);
       live.rotation.set(0, 0, 0);
       live.scale.setScalar(scale * pulse * Math.min(2.6, dist / 7));
-      const hot = duel.phase === "live" && sel?.kind === "player" && sel.id === duel.id;
-      const fill = hot ? 0xff4d3a : 0xff2a2a;
       const mat = (live.children[0] as THREE.Mesh | undefined)?.material as THREE.MeshBasicMaterial | undefined;
       if (mat) {
-        mat.color.setHex(fill);
-        mat.opacity = 0.35 + pulse * 0.65;
+        mat.color.setHex(0xffffff);
+        mat.opacity = 0.55 + pulse * 0.45;
       }
     }
     const probe = globalThis as typeof globalThis & { __selRing?: { visible: boolean; x: number; z: number } };
@@ -3051,7 +3278,7 @@ function World() {
 
   return (
     <>
-      <hemisphereLight args={["#d5e0e8", "#3a342c", 0.72]} />
+      <hemisphereLight ref={hemiRef} args={["#d5e0e8", "#3a342c", 0.72]} />
       <directionalLight
         ref={lightRef}
         position={[8, 12, 5]}

@@ -1423,16 +1423,20 @@ export const QUEST_BOARD = [
 	{ id: "q-wraith", track: "av", map: "ay", kind: "kill", mob: "wraith", name: "Buz Ruhu", need: 7, min: 54, xp: 860, gold: 300, reward: "" },
 	{ id: "q-muhafiz", track: "av", map: "ay", kind: "kill", mob: "muhafiz", name: "Golem Muhafız", need: 1, min: 56, xp: 980, gold: 360, reward: "" },
 	{ id: "q-lord", track: "av", map: "ay", kind: "kill", mob: "lord", name: "Ruh Lordu", need: 1, min: 58, xp: 420, gold: 180, reward: "" },
-	{ id: "q-60", track: "ana", map: "ay", kind: "kill", mob: "wraith", name: "Ayın Sonu", need: 16, min: 60, xp: 520, gold: 220, reward: "" },
-	{ id: "q-64", track: "ana", map: "ay", kind: "kill", mob: "golem", name: "Taş Duvar", need: 12, min: 64, xp: 560, gold: 240, reward: "" },
-	{ id: "q-68", track: "ana", map: "ay", kind: "kill", mob: "bandit", name: "Harabe Temizliği", need: 18, min: 68, xp: 600, gold: 260, reward: "" },
-	{ id: "q-72", track: "ana", map: "dolunay", kind: "kill", mob: "ayi", name: "Ayı Reisi Yeniden", need: 1, min: 72, xp: 480, gold: 280, reward: "" },
-	{ id: "q-76", track: "ana", map: "dolunay", kind: "kill", mob: "komutan", name: "Komutanın Dönüşü", need: 1, min: 76, xp: 520, gold: 300, reward: "" },
-	{ id: "q-80", track: "ana", map: "ay", kind: "kill", mob: "muhafiz", name: "Muhafız Kapısı", need: 1, min: 80, xp: 560, gold: 340, reward: "" },
-	{ id: "q-84", track: "ana", map: "ay", kind: "kill", mob: "bat", name: "Yarasa Sürüsü", need: 20, min: 84, xp: 640, gold: 360, reward: "" },
-	{ id: "q-88", track: "ana", map: "ay", kind: "kill", mob: "lord", name: "Lordun Gölgesi", need: 1, min: 88, xp: 620, gold: 400, reward: "" },
-	{ id: "q-92", track: "ana", map: "koy2", kind: "kill", mob: "kral", name: "Domuz Kralın İzi", need: 1, min: 92, xp: 500, gold: 380, reward: "" },
-	{ id: "q-96", track: "ana", map: "ay", kind: "kill", mob: "wraith", name: "Sonsuz Ay", need: 24, min: 96, xp: 700, gold: 460, reward: "" },
+	{ id: "q-60", track: "ana", map: "abis", kind: "kill", mob: "knight", name: "Gezegene Adım", need: 12, min: 60, xp: 980, gold: 420, reward: "" },
+	{ id: "q-64", track: "ana", map: "abis", kind: "kill", mob: "abyss", name: "Abis Solucanı", need: 10, min: 64, xp: 1120, gold: 500, reward: "" },
+	{ id: "q-68", track: "ana", map: "abis", kind: "kill", mob: "abis-kral", name: "Abis Kralı", need: 1, min: 66, xp: 1400, gold: 680, reward: "" },
+	{ id: "q-72", track: "ana", map: "abis", kind: "kill", mob: "sentinel", name: "Gezegen Gözcüsü", need: 8, min: 68, xp: 1280, gold: 560, reward: "" },
+	{ id: "q-76", track: "ana", map: "abis", kind: "kill", mob: "gezegen", name: "Gezegen Bekçisi", need: 1, min: 69, xp: 1560, gold: 760, reward: "" },
+	{ id: "q-80", track: "ana", map: "kanli", kind: "kill", mob: "blood", name: "Kan Avı", need: 12, min: 72, xp: 1680, gold: 820, reward: "" },
+	{ id: "q-84", track: "ana", map: "kanli", kind: "kill", mob: "drake", name: "Kemik Ejderi", need: 8, min: 75, xp: 1860, gold: 900, reward: "" },
+	{ id: "q-88", track: "ana", map: "kanli", kind: "kill", mob: "cellat", name: "Kan Celladı", need: 1, min: 78, xp: 2100, gold: 1040, reward: "" },
+	{ id: "q-92", track: "ana", map: "kanli", kind: "kill", mob: "ejder", name: "Kanlı Ejder", need: 1, min: 80, xp: 2300, gold: 1180, reward: "" },
+	{ id: "q-96", track: "ana", map: "kiyamet", kind: "kill", mob: "night", name: "Sonsuz Gece", need: 10, min: 84, xp: 2500, gold: 1300, reward: "" },
+	{ id: "q-gece", track: "ana", map: "kiyamet", kind: "kill", mob: "gece", name: "Gece Muhafızı", need: 1, min: 88, xp: 2800, gold: 1500, reward: "" },
+	{ id: "q-doom", track: "ana", map: "kiyamet", kind: "kill", mob: "doom", name: "Kıyamet Atlısı", need: 8, min: 90, xp: 2700, gold: 1460, reward: "" },
+	{ id: "q-end", track: "ana", map: "kiyamet", kind: "kill", mob: "end", name: "Son Muhafız", need: 8, min: 95, xp: 3000, gold: 1700, reward: "" },
+	{ id: "q-son", track: "ana", map: "kiyamet", kind: "kill", mob: "son", name: "Kıyamet", need: 1, min: 97, xp: 3600, gold: 2200, reward: "" },
 	{ id: "y-fish", track: "yan", map: "koy", kind: "fish", name: "İlk Av", need: 3, min: 5, xp: 90, gold: 30, reward: "" },
 	{ id: "y-mine", track: "yan", map: "koy", kind: "mine", name: "İlk Damarı", need: 6, min: 8, xp: 110, gold: 40, reward: "" },
 	{ id: "y-sell", track: "yan", map: "koy", kind: "sell", name: "Fazlayı Sat", need: 1, min: 3, xp: 40, gold: 10, reward: "" },
@@ -1454,6 +1458,12 @@ export const BOSSES = [
 	{ id: "komutan", name: "İskelet Komutan", level: 44, realm: "dolunay", x: 388, z: -32, spec: "skel" },
 	{ id: "muhafiz", name: "Golem Muhafız", level: 56, realm: "ay", x: -470, z: 28, spec: "golem" },
 	{ id: "lord", name: "Ruh Lordu", level: 58, realm: "ay", x: -384, z: -36, spec: "wraith" },
+	{ id: "abis-kral", name: "Abis Kralı", level: 66, realm: "abis", x: 78, z: -352, spec: "knight" },
+	{ id: "gezegen", name: "Gezegen Bekçisi", level: 69, realm: "abis", x: -86, z: -488, spec: "sentinel" },
+	{ id: "cellat", name: "Kan Celladı", level: 78, realm: "kanli", x: 498, z: 468, spec: "hangman" },
+	{ id: "ejder", name: "Kanlı Ejder", level: 80, realm: "kanli", x: 348, z: 500, spec: "drake" },
+	{ id: "gece", name: "Gece Muhafızı", level: 88, realm: "kiyamet", x: -348, z: 492, spec: "night" },
+	{ id: "son", name: "Kıyamet", level: 97, realm: "kiyamet", x: -506, z: 352, spec: "end" },
 ];
 export function questGiver(row: { id?: string; kind?: string; talk?: string; map?: string } | undefined | null) {
 	if (!row) return null;
@@ -1603,7 +1613,7 @@ export function questGuide(px, pz) {
 	}
 	return { x: best.x, z: best.z, label: BOSSES.some((boss) => boss.x === best.x && boss.z === best.z) ? `${BOSSES.find((boss) => boss.x === best.x && boss.z === best.z)?.name || "Boss"} zindan kapısı` : (row?.name || "Hedef"), kind: "mob" };
 }
-export const GATE_COST = { koy: 100, koy2: 500, dolunay: 1500, ay: 4000 };
+export const GATE_COST = { koy: 100, koy2: 500, dolunay: 1500, ay: 4000, abis: 7500, kanli: 12000, kiyamet: 18000 };
 const SLOT_STONES = {
 	weapon: ["tas-silah", "Silah Taşı"],
 	armor: ["tas-zirh", "Zırh Taşı"],
@@ -1712,6 +1722,7 @@ function gearDrop(level) {
 		desc: classLine(pick.slot, pick.forClass),
 		kind: "gear",
 		forClass: pick.forClass,
+		req: level,
 		enchants: rollDropEnchants(pick.slot)
 	};
 }
@@ -1743,9 +1754,22 @@ function rollDropEnchants(slot) {
 }
 function tidyItem(item) {
 	if (!item) return item;
-	const next = item.id === "kazma" ? { ...item, level: 8, req: 8 } : item;
+	const next = item.id === "kazma" ? { ...item, level: 8, req: 8 } : { ...item };
+	if ((!next.kind || next.kind === "gear") && next.id !== "starter-chest" && next.id !== "boss-sandik") {
+		const lv = Math.max(1, Math.floor(Number(next.level) || 1));
+		next.level = lv;
+		next.req = Math.max(lv, Math.floor(Number(next.req) || 1));
+	}
 	if (Array.isArray(next.enchants)) next.enchants = dedupeEnchants(next.enchants);
 	return next;
+}
+function itemNeed(it) {
+	if (!it) return 1;
+	if (it.id === "kazma") return 8;
+	if (it.kind && it.kind !== "gear" && it.kind !== "tool") return Math.max(1, Math.floor(Number(it.req) || 1));
+	const lv = Math.max(1, Math.floor(Number(it.level) || 1));
+	const req = Math.max(1, Math.floor(Number(it.req) || 1));
+	return Math.max(req, lv);
 }
 function matDrop(level) {
 	const slots = ["weapon", "armor", "helmet", "belt", "boots", "gloves", "ring", "necklace", "earring", "bracelet"];
@@ -1839,8 +1863,9 @@ export function rollKillLoot(level, boss, playerLevel = level) {
 	const gap = Math.max(0, Math.floor(playerLevel || level) - Math.floor(level));
 	const near = Math.pow(0.62, Math.min(16, gap));
 	const out = [];
-	if (Math.random() < (boss ? 0.1 : 0.014) * near) out.push(gearDrop(level));
-	if (Math.random() < (boss ? 0.07 : 0.01) * Math.max(0.12, near)) {
+	if (Math.random() < (boss ? 0.62 : 0.28) * near) out.push(gearDrop(level));
+	if (boss && Math.random() < 0.24 * near) out.push(gearDrop(Math.max(1, level - 1)));
+	if (Math.random() < (boss ? 0.22 : 0.07) * Math.max(0.2, near)) {
 		const pot = rollPot(Math.random() < 0.5 ? "hp" : "mp");
 		if (pot) out.push(pot);
 	}
@@ -1882,9 +1907,9 @@ export function bossChestItem(name, level) {
 }
 export function dropTable(level) {
 	return [
-		`Sv.${level} silah, zırh, miğfer veya kemer`,
+		`Sv.${level} giyilebilir eşya`,
 		"Bot, eldiven ve takı",
-		"Parçaya özel yükseltme taşı (seyrek)",
+		"İksir",
 		"+0 ile +3 ve seyrek efsun"
 	];
 }
@@ -2201,6 +2226,12 @@ var staRecover = 0;
 var liveSta = -1;
 var liveMana = -1;
 var liveHp = -1;
+let levelPing = 0;
+export function takeLevelPing() {
+	const n = levelPing;
+	levelPing = 0;
+	return n;
+}
 var pendingCast = null;
 var guardUntil = 0;
 var guardCut = 0;
@@ -2322,6 +2353,9 @@ function applyVitals(s, fill) {
 		s.hp = s.hpMax;
 		s.mana = s.manaMax;
 		s.sta = s.staMax;
+		liveHp = s.hp;
+		liveMana = s.mana;
+		liveSta = s.sta;
 	} else {
 		s.hp = Math.min(s.hp, s.hpMax);
 		s.mana = Math.min(s.mana, s.manaMax);
@@ -2380,6 +2414,7 @@ function inferTree(classId, skills) {
 }
 export function applySave(save) {
 	resetLiveVitals();
+	levelPing = 0;
 	const s = useRpg.getState();
 	const classId = asClassId(save.classId);
 	const bag = withStarterChest(Array.from({ length: BAG_SIZE }, (_, i) => save.bag[i] ?? null), classId, {
@@ -2422,7 +2457,7 @@ export function applySave(save) {
 		quests,
 		depot: Array.from({ length: 24 }, (_, i) => save.depot?.[i] ?? null),
 		blocked: Array.isArray(save.blocked) ? save.blocked : [],
-		bagStage: save.bagStage ?? 0,
+		bagStage: Math.max(0, Math.min(8, Math.floor(Number(save.bagStage) || 0))),
 		wellAt: save.wellAt ?? 0,
 		bonusUntil: save.bonusUntil ?? 0,
 		stall: Array.isArray(save.stall) ? save.stall : null,
@@ -2454,8 +2489,16 @@ export function applySave(save) {
 		charOpen: false,
 		shop: null
 	};
-	applyVitals(next, false);
-	next.hp = Math.min(next.hp, next.hpMax);
+	for (const key of Object.keys(next.equipped)) {
+		const it = next.equipped[key];
+		if (!it || itemNeed(it) <= next.level) continue;
+		const hole = next.bag.findIndex((slot, i) => i < openBagCount(next.bagStage) && slot == null);
+		if (hole >= 0) {
+			next.bag[hole] = it;
+			next.equipped[key] = null;
+		}
+	}
+	applyVitals(next, true);
 	if (next.level <= 1 && next.xp === 0 && next.gold === 400) next.gold = 0;
 	const earnedHorse = next.quests.some((quest) => quest.id === "q-at" && quest.claimed);
 	if (earnedHorse && !next.steed) next.steed = horseCoat(next.mountItem?.coatId);
@@ -3766,7 +3809,7 @@ export const useRpg = create<RpgState>((set, get) => ({
 			set({ toast: "Bu eşya senin sınıfına ait değil" });
 			return;
 		}
-		const need = it.id === "kazma" ? 8 : it.req ?? 1;
+		const need = itemNeed(it);
 		if (need > s.level) {
 			set({ toast: `Seviye ${need} gerekir` });
 			return;
@@ -4018,7 +4061,10 @@ export const useRpg = create<RpgState>((set, get) => ({
 			s.unspent += 1;
 		}
 		applyVitals(s, notes.some((n) => n.startsWith("Seviye")));
-		if (notes.length) s.toast = notes[0];
+		if (notes.length) {
+			s.toast = notes[notes.length - 1];
+			levelPing = s.level;
+		}
 		set(s);
 		ensureQuest(get, set);
 		return notes;
@@ -4428,6 +4474,10 @@ export const useRpg = create<RpgState>((set, get) => ({
 		const realm = REALMS.find((row) => row.id === id);
 		const cost = GATE_COST[id] ?? 0;
 		if (!realm) return;
+		if (get().level < realm.min) {
+			set({ toast: `${realm.name} için seviye ${realm.min} gerekir` });
+			return;
+		}
 		if (get().gold < cost) {
 			set({ toast: "Yetersiz altın" });
 			return;
