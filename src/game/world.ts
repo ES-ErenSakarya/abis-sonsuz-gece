@@ -578,34 +578,83 @@ export function retireVein(x: number, z: number) {
   }
 }
 
-export type MeteorSpot = { id: string; level: number; x: number; z: number; realm: string };
-const METEOR_TABLE: { realm: (typeof REALMS)[number]["id"]; levels: number[] }[] = [
-  { realm: "koy", levels: [8] },
-  { realm: "koy2", levels: [22] },
-  { realm: "dolunay", levels: [36] },
-  { realm: "ay", levels: [52] },
-  { realm: "abis", levels: [65] },
-  { realm: "kanli", levels: [75] },
-  { realm: "kiyamet", levels: [90] },
+export type MeteorSpot = { id: string; name: string; level: number; x: number; z: number; realm: string; live: boolean };
+const METEOR_NAMES: Record<string, string[]> = {
+  koy: ["Kıvılcım Taşı", "Gece Külü", "Bozkır Yıldızı", "Çatlak Gök", "İlk Kıvılcım"],
+  koy2: ["Demir Yağmuru", "Köy Yıldızı", "Kül Yuvası", "Çakıl Göğü", "İkinci Kıvılcım"],
+  dolunay: ["Ay Parçası", "Gümüş Çatlak", "Soluk Taş", "Hilal Külü", "Gece Kıvılcımı"],
+  ay: ["Sonsuz Kıvılcım", "Buz Yıldızı", "Ay Çekirdeği", "Soluk Meteor", "Gece Çatlağı"],
+  abis: ["Abis Çekirdeği", "Mor Kıvılcım", "Derin Taş", "Uçurum Yıldızı", "Gezegen Külü"],
+  kanli: ["Kanlı Kıvılcım", "Kızıl Taş", "Ay Yarası", "Kan Yıldızı", "Kızıl Çatlak"],
+  kiyamet: ["Kıyamet Çekirdeği", "Son Kıvılcım", "Kara Yıldız", "Son Taş", "Felaket Külü"],
+};
+const METEOR_TABLE: { realm: (typeof REALMS)[number]["id"]; level: number }[] = [
+  { realm: "koy", level: 8 },
+  { realm: "koy2", level: 22 },
+  { realm: "dolunay", level: 36 },
+  { realm: "ay", level: 52 },
+  { realm: "abis", level: 65 },
+  { realm: "kanli", level: 75 },
+  { realm: "kiyamet", level: 90 },
 ];
 
+export function meteorOutside(realmId: string, x: number, z: number) {
+  const home = REALMS.find((row) => row.id === realmId) ?? REALMS[0];
+  const dist = Math.hypot(x - home.x, z - home.z);
+  const town = realmId === "koy" ? FENCE_R + 12 : 38;
+  const edge = (realmId === "koy" ? VILLAGE_BOUND : DUNGEON_BOUND) - 16;
+  if (dist < town || dist > edge) return false;
+  if (blocked(x, z, 1.35)) return false;
+  if (inWater(x, z, 1.35)) return false;
+  if (Math.hypot(x - LAKE.x, z - LAKE.z) < LAKE.r + 6) return false;
+  return true;
+}
+
+let meteorCache: MeteorSpot[] | null = null;
+
 export function meteorSpots(): MeteorSpot[] {
+  if (meteorCache) return meteorCache;
   const out: MeteorSpot[] = [];
   for (const row of METEOR_TABLE) {
     const home = REALMS.find((item) => item.id === row.realm) ?? REALMS[0];
-    row.levels.forEach((level, index) => {
-      const ang = (index + 0.35) * ((Math.PI * 2) / row.levels.length) + 0.55;
-      const rad = home.id === "koy" ? 128 : 96;
+    const names = METEOR_NAMES[row.realm] ?? METEOR_NAMES.koy!;
+    const minR = home.id === "koy" ? FENCE_R + 18 : 44;
+    const maxR = home.id === "koy" ? 158 : 120;
+    for (let i = 0; i < 5; i++) {
+      let x = home.x + Math.cos((i / 5) * Math.PI * 2) * minR;
+      let z = home.z + Math.sin((i / 5) * Math.PI * 2) * minR;
+      for (let n = 0; n < 28; n++) {
+        const ang = (i / 5) * Math.PI * 2 + 0.35 + n * 0.41;
+        const rad = minR + ((i * 23 + n * 13) % Math.max(8, maxR - minR));
+        const nx = home.x + Math.cos(ang) * rad;
+        const nz = home.z + Math.sin(ang) * rad;
+        if (!meteorOutside(home.id, nx, nz)) continue;
+        if (out.some((spot) => Math.hypot(spot.x - nx, spot.z - nz) < 18)) continue;
+        x = nx;
+        z = nz;
+        break;
+      }
       out.push({
-        id: `meteor-${row.realm}-${level}`,
-        level,
+        id: `meteor-${row.realm}-${i}`,
+        name: names[i] ?? `Meteor ${i + 1}`,
+        level: row.level,
         realm: row.realm,
-        x: home.x + Math.cos(ang) * rad,
-        z: home.z + Math.sin(ang) * rad,
+        x,
+        z,
+        live: true,
       });
-    });
+    }
   }
+  meteorCache = out;
   return out;
+}
+
+export function placeMeteor(id: string, x: number, z: number, live = true) {
+  const spot = meteorSpots().find((row) => row.id === id);
+  if (!spot) return;
+  spot.x = x;
+  spot.z = z;
+  spot.live = live;
 }
 
 export const REALMS = [

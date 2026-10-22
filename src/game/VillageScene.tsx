@@ -1,14 +1,14 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import * as THREE from "three";
-import { adoptDummy, createBeast, createClassAvatar, createHorse, createMentor, createTownsman, createVendor, hitBeast, hitDummy, mitigate, mobBite, mobXp, SPECIES, stickGear, syncBow, syncGear, tickBeast, tickDummy, tickVendor, weaponMesh, type Beast, type Dummy, type Mentor, type Vendor } from "@/game/actors";
+import { adoptDummy, createBeast, createClassAvatar, createHorse, createMentor, createTownsman, createVendor, hitBeast, hitDummy, mitigate, mobBite, mobXp, RANGED_HIT, SPECIES, stickGear, syncBow, syncGear, tickBeast, tickDummy, tickVendor, weaponMesh, type Beast, type Dummy, type Mentor, type Vendor } from "@/game/actors";
 import { createCombat, type ShotTarget } from "@/game/combat";
 import { chatBubbles, systemSay } from "@/game/chat";
 import { amHost, broadcastStall, chestView, closeChest, emitHit, expireLoot, fieldLoot, fieldMobs, marketBoards, openChest, openStallView, placeChest, placeLoot, pushMobState, sendReward, setLootHint, shareXp, takePendingDrops, takeRemoteHits } from "@/game/field";
 import { useHud } from "@/game/hudStore";
 import { viewport } from "@/game/viewport";
 import { axes, held, input, sim, takeHop } from "@/game/input";
-import { BOSSES, MENTORS, bossChestItem, commitSkill, meteorLoot, questGuide, rankOf, refundSkill, rollKillLoot, takeCast, takeLevelPing, tryReceiveItem, useRpg, weaponStyleOf, enchantView, type Item, type NearKind, type WeaponStyle } from "@/game/rpg";
+import { BOSSES, MENTORS, bossChestItem, commitSkill, meteorLoot, questGuide, rankOf, refundSkill, rollKillLoot, takeCast, takeLevelPing, takeMountKick, tryReceiveItem, useRpg, weaponStyleOf, enchantView, type Item, type NearKind, type WeaponStyle } from "@/game/rpg";
 import { arenaFloor, beginRun, bindDungeonEnter, dungeonNow, endRun } from "@/game/dungeon";
 import { playAttack, syncRealmMusic } from "@/game/audio";
 import { effectiveGfx, loadGfx, subscribeGfx } from "@/game/settings";
@@ -19,7 +19,7 @@ import { presence, remotes, type RemoteBody } from "@/game/online";
 import { readTarget, sendDuelHit, setMobCard, setSelection, takePick, type Sel } from "@/game/target";
 import { bindCreativeScene, clearEditables, editArmed, pickEditable, selectEditable, tickCreative, trackProp } from "@/game/creative";
 import { mountStudio, studioHop, studioLevelBlock, studioPaintPoint, studioPainting, studioRay, studioSpawners, studioZoneName, tickStudio, unmountStudio } from "@/game/studio";
-import { blocked, bridgeName, campSpawns, dryLand, faceYaw, FISHER_STAND, FENCE_R, DUNGEON_BOUND, groundY, inWater, LAKE, liveVeins, meteorSpots, onPier, PLAYER_R, REALMS, realmAt, realmGate, realmHerald, slide, WELL, zoneName } from "@/game/world";
+import { blocked, bridgeName, campSpawns, dryLand, faceYaw, FISHER_STAND, FENCE_R, DUNGEON_BOUND, groundY, inWater, LAKE, liveVeins, meteorOutside, meteorSpots, placeMeteor, onPier, PLAYER_R, REALMS, realmAt, realmGate, realmHerald, slide, WELL, zoneName } from "@/game/world";
 
 const WALK_REF = 1.67;
 const ARENA_R = 22;
@@ -208,6 +208,28 @@ function cylinderT(ray: THREE.Ray, cx: number, cz: number, radius: number, y0: n
   };
   if (inside(ta)) return ta;
   if (inside(tb)) return tb;
+  return null;
+}
+
+function groundHit(ray: THREE.Ray) {
+  const origin = ray.origin;
+  const dir = ray.direction;
+  let prevT = 0;
+  let prevAbove = origin.y - groundY(origin.x, origin.z, true);
+  for (let t = 0.35; t < 96; t += 0.35) {
+    const x = origin.x + dir.x * t;
+    const y = origin.y + dir.y * t;
+    const z = origin.z + dir.z * t;
+    const above = y - groundY(x, z, true);
+    if (prevAbove > 0 && above <= 0) {
+      const span = prevAbove - above;
+      const k = span > 1e-4 ? prevAbove / span : 1;
+      const hitT = prevT + (t - prevT) * k;
+      return { x: origin.x + dir.x * hitT, z: origin.z + dir.z * hitT };
+    }
+    prevT = t;
+    prevAbove = above;
+  }
   return null;
 }
 
@@ -851,9 +873,14 @@ function paintMob(
     return;
   }
   const name = el.children[0] as HTMLElement;
+  const bar = el.children[1] as HTMLElement;
   const fill = el.querySelector("span") as HTMLElement;
   const num = el.children[2] as HTMLElement;
+  const bare = id === "mob-meteor";
+  bar.style.display = bare ? "none" : "block";
+  num.style.display = bare ? "none" : "block";
   if (name.textContent !== title) name.textContent = title;
+  if (bare) return;
   const ratio = Math.max(0, Math.min(1, hp / Math.max(1, hpMax)));
   fill.style.width = `${ratio * 100}%`;
   const label = `${Math.ceil(Math.max(0, hp))} / ${Math.ceil(hpMax)}`;
@@ -1059,10 +1086,12 @@ function World() {
   const dustRef = useRef<{ sprite: THREE.Sprite; life: number; vy: number }[]>([]);
   const dummyRef = useRef<Dummy | null>(null);
   const beastsRef = useRef<Beast[]>([]);
+  const horseKick = useRef(0);
   const portalLock = useRef(0);
   const arenaRef = useRef<Map<string, THREE.Group>>(new Map());
   type MeteorRock = {
     id: string;
+    name: string;
     level: number;
     realm: string;
     x: number;
@@ -1076,6 +1105,12 @@ function World() {
     pack: number;
   };
   const meteorRef = useRef<MeteorRock[]>([]);
+  const engageRef = useRef<
+    | { kind: "fight"; id: string; what: "mob" | "meteor" }
+    | { kind: "use"; role: NearKind; mentor: string | null; x: number; z: number }
+    | { kind: "go"; x: number; z: number; stuck: number; prev: number }
+    | null
+  >(null);
   const chipMeteor = useRef<(rock: MeteorRock, dmg: number) => void>(() => undefined);
   const bossLeave = useRef(0);
   const shopAnchor = useRef({ key: "", x: 0, z: 0 });
@@ -1132,6 +1167,7 @@ function World() {
   const hostRef = useRef<THREE.Group | null>(null);
   const spawnClock = useRef<Record<string, number>>({});
   const zoneNote = useRef("");
+  const fieldSide = useRef("");
   const stallRef = useRef<THREE.Group | null>(null);
   const splashRef = useRef<THREE.Mesh | null>(null);
   const splashLife = useRef(1);
@@ -1299,7 +1335,7 @@ function World() {
       group.add(host);
       const hp = meteorMaxHp(spot.level);
       const pack = 700 + meteors.length;
-      meteors.push({ id: spot.id, level: spot.level, realm: spot.realm, x: spot.x, z: spot.z, hp, hpMax: hp, mesh: host, broken: false, respawn: 0, wave: 0, pack });
+      meteors.push({ id: spot.id, name: spot.name, level: spot.level, realm: spot.realm, x: spot.x, z: spot.z, hp, hpMax: hp, mesh: host, broken: false, respawn: 0, wave: 0, pack });
     }
     meteorRef.current = meteors;
     const summonMeteor = (rock: (typeof meteors)[number], count: number) => {
@@ -1354,32 +1390,34 @@ function World() {
       reapMeteor(rock);
       rock.broken = true;
       rock.mesh.visible = false;
-      rock.respawn = 50;
+      rock.respawn = 15;
       const dropX = rock.x;
       const dropZ = rock.z;
       const realm = REALMS.find((row) => row.id === rock.realm) ?? REALMS[0];
-      for (let n = 0; n < 36; n++) {
+      for (let n = 0; n < 48; n++) {
         const ang = Math.random() * Math.PI * 2;
-        const rad = (realm.id === "koy" ? 42 : 24) + Math.random() * (realm.id === "koy" ? 100 : 90);
+        const minR = realm.id === "koy" ? FENCE_R + 18 : 44;
+        const span = realm.id === "koy" ? 130 : 70;
+        const rad = minR + Math.random() * span;
         const nx = realm.x + Math.cos(ang) * rad;
         const nz = realm.z + Math.sin(ang) * rad;
-        if (Math.hypot(nx - realm.x, nz - realm.z) < 18) continue;
-        if (Math.hypot(nx - LAKE.x, nz - LAKE.z) < LAKE.r + 3) continue;
-        if (inWater(nx, nz, 1.1)) continue;
-        if (blocked(nx, nz, 1.1)) continue;
+        if (!meteorOutside(realm.id, nx, nz)) continue;
         if (meteorRef.current.some((row) => row !== rock && Math.hypot(row.x - nx, row.z - nz) < 16)) continue;
         rock.x = nx;
         rock.z = nz;
         rock.mesh.position.set(nx, groundY(nx, nz), nz);
+        placeMeteor(rock.id, nx, nz, false);
         break;
       }
+      if (meteorSpots().find((row) => row.id === rock.id)?.live !== false) placeMeteor(rock.id, rock.x, rock.z, false);
       const drops = meteorLoot(rock.level);
+      useRpg.getState().noteMeteor(rock.id);
       let stored = 0;
       for (const item of drops) {
         if (tryReceiveItem(item)) stored += 1;
         else placeChest([item as Item], dropX + 0.5, dropZ + 0.3);
       }
-      systemSay(stored ? `Meteor kırıldı · ${stored} eşya` : "Meteor kırıldı, çanta dolu");
+      systemSay(stored ? `${rock.name} kırıldı · ${stored} eşya` : `${rock.name} kırıldı, çanta dolu`);
     };
     const spawnDungeon = (boss: (typeof BOSSES)[number], wave: number) => {
       const spec = SPECIES.find((item) => item.id === boss.spec);
@@ -1512,7 +1550,7 @@ function World() {
     levelRing.visible = false;
     group.add(levelRing);
     levelRingRef.current = levelRing;
-    const capBadge = makeIconSprite("/ui/max-level.png", 1.25, 1.25);
+    const capBadge = makeIconSprite("/ui/max-level.png", 0.46, 0.46);
     capBadge.visible = false;
     group.add(capBadge);
     maxBadge.current = capBadge;
@@ -1867,6 +1905,7 @@ function World() {
   useFrame((_, delta) => {
     viewport.sync();
     const dt = Math.min(delta, 0.05);
+    let autoHit = false;
     tickCreative();
     tickStudio(dt, sim.x, sim.z);
     if (studioPainting()) {
@@ -1928,7 +1967,7 @@ function World() {
           consider(cylinderT(_picker.ray, rock.x, rock.z, 1.35, by, by + 2.35), {
             kind: "meteor",
             id: rock.id,
-            name: `Meteor Taşı · Sv.${rock.level}`,
+            name: rock.name,
             level: rock.level,
           });
         }
@@ -1972,18 +2011,32 @@ function World() {
           if (!mesh.visible) continue;
           consider(cylinderT(_picker.ray, mesh.position.x, mesh.position.z, 0.9, 0, 1.1), null, { role: "stall", mentor: id }, mesh.position.x, mesh.position.z);
         }
+        const engageClick = Boolean(click.engage);
+        const useNpc = (talk: { role: NearKind; mentor: string | null }, x: number, z: number) => {
+          if (talk.role === "vein") useRpg.getState().selectVein(x, z);
+          else if (talk.role === "stall") openStallView(talk.mentor || "mine");
+          else {
+            useRpg.getState().setNear(talk.role, talk.mentor);
+            useRpg.getState().interact();
+          }
+        };
         if (hit.talk) {
           const reach = hit.talk.role === "smith" || hit.talk.role === "boss" ? 2.8 : hit.talk.role === "well" ? 1.7 : hit.talk.role === "vein" ? 1.9 : hit.talk.role === "mentor" ? 2 : hit.talk.role === "stall" ? 3.2 : 2.2;
-          if (Math.hypot(sim.x - hit.x, sim.z - hit.z) <= reach) {
-            if (hit.talk.role === "vein") useRpg.getState().selectVein(hit.x, hit.z);
-            else if (hit.talk.role === "stall") openStallView(hit.talk.mentor || "mine");
-            else {
-              useRpg.getState().setNear(hit.talk.role, hit.talk.mentor);
-              useRpg.getState().interact();
-            }
-          }
-        } else if (hit.best) setSelection(hit.best);
-        else {
+          const close = Math.hypot(sim.x - hit.x, sim.z - hit.z) <= reach;
+          if (engageClick && !close) {
+            engageRef.current = { kind: "use", role: hit.talk.role, mentor: hit.talk.mentor, x: hit.x, z: hit.z };
+          } else if (close) {
+            engageRef.current = null;
+            useNpc(hit.talk, hit.x, hit.z);
+          } else engageRef.current = null;
+        } else if (hit.best && (hit.best.kind === "mob" || hit.best.kind === "meteor")) {
+          setSelection(hit.best);
+          engageRef.current = engageClick ? { kind: "fight", id: hit.best.id, what: hit.best.kind } : null;
+        } else if (hit.best) {
+          setSelection(hit.best);
+          engageRef.current = null;
+        } else {
+          if (engageClick) engageRef.current = null;
           let dropId = "";
           let dropT = 12;
           for (const row of fieldLoot()) {
@@ -1994,7 +2047,13 @@ function World() {
             }
           }
           if (dropId) openChest(dropId);
-          else setSelection(null);
+          else if (engageClick) {
+            const spot = groundHit(_picker.ray);
+            if (spot && Math.hypot(spot.x - sim.x, spot.z - sim.z) > 0.45) {
+              setSelection(null);
+              engageRef.current = { kind: "go", x: spot.x, z: spot.z, stuck: 0, prev: 1e9 };
+            } else engageRef.current = null;
+          } else setSelection(null);
         }
         }
       }
@@ -2013,20 +2072,124 @@ function World() {
     } else if (useRpg.getState().down) {
       sim.speed = 0;
       sim.yaw = input.orbit;
+    } else if (useRpg.getState().mapLoad) {
+      sim.speed = 0;
     } else {
+      const rangedMark = () => {
+        const styleNow = weaponStyleOf(useRpg.getState().equipped.weapon?.id);
+        if (styleNow !== "bow" && styleNow !== "staff") return null;
+        const sel = readTarget().sel;
+        if (!sel || (sel.kind !== "mob" && sel.kind !== "meteor")) return null;
+        if (sel.kind === "meteor") {
+          const rock = meteorRef.current.find((row) => row.id === sel.id && !row.broken);
+          if (!rock) return null;
+          return { id: sel.id, what: "meteor" as const, dist: Math.hypot(rock.x - sim.x, rock.z - sim.z) };
+        }
+        const mob = sel.id === "dummy" ? dummyRef.current : beastsRef.current.find((beast) => beast.id === sel.id && beast.alive) ?? null;
+        if (!mob?.alive) return null;
+        return { id: sel.id, what: "mob" as const, dist: Math.hypot(mob.root.position.x - sim.x, mob.root.position.z - sim.z) };
+      };
+      const hunt = rangedMark();
+      const closing = Boolean(hunt && held("Space") && hunt.dist > RANGED_HIT);
+      if (closing && hunt) engageRef.current = { kind: "fight", id: hunt.id, what: hunt.what };
       const { fwd, str } = axes();
       const camYaw = input.orbit;
       sim.cameraYaw = camYaw;
-      const picked = readTarget().sel;
-      const locked =
-        picked?.kind === "mob" ? beastsRef.current.find((beast) => beast.id === picked.id && beast.alive) ?? null : null;
       const fx = -Math.sin(camYaw);
       const fz = -Math.cos(camYaw);
       const rx = Math.cos(camYaw);
       const rz = -Math.sin(camYaw);
-      const mx = fx * fwd + rx * str;
-      const mz = fz * fwd + rz * str;
-      const len = Math.hypot(mx, mz);
+      let mx = fx * fwd + rx * str;
+      let mz = fz * fwd + rz * str;
+      let len = Math.hypot(mx, mz);
+      const order = engageRef.current;
+      if (!closing && (len > 0.12 || useRpg.getState().down)) {
+        if (len > 0.12) engageRef.current = null;
+      } else if (order) {
+        let tx = 0;
+        let tz = 0;
+        let ok = false;
+        if (order.kind === "fight") {
+          if (order.what === "meteor") {
+            const rock = meteorRef.current.find((row) => row.id === order.id && !row.broken);
+            if (rock) {
+              tx = rock.x;
+              tz = rock.z;
+              ok = true;
+            }
+          } else {
+            const mob = order.id === "dummy" ? dummyRef.current : beastsRef.current.find((beast) => beast.id === order.id && beast.alive) ?? null;
+            if (mob?.alive) {
+              tx = mob.root.position.x;
+              tz = mob.root.position.z;
+              ok = true;
+            }
+          }
+          if (!ok) engageRef.current = null;
+        } else if (order.kind === "go") {
+          tx = order.x;
+          tz = order.z;
+          ok = true;
+        } else {
+          tx = order.x;
+          tz = order.z;
+          ok = true;
+        }
+        if (ok) {
+          const dx = tx - sim.x;
+          const dz = tz - sim.z;
+          const dist = Math.hypot(dx, dz) || 0.0001;
+          const styleNow = weaponStyleOf(useRpg.getState().equipped.weapon?.id);
+          const stop =
+            order.kind === "go"
+              ? 0.42
+              : order.kind === "use"
+              ? order.role === "smith" || order.role === "boss"
+                ? 2.15
+                : order.role === "stall"
+                  ? 2.3
+                  : order.role === "well"
+                    ? 1.3
+                    : order.role === "vein"
+                      ? 1.4
+                      : order.role === "mentor"
+                        ? 1.45
+                        : 1.65
+              : styleNow === "bow" || styleNow === "staff"
+                ? RANGED_HIT - 0.35
+                : 2.15;
+          if (dist > stop) {
+            mx = dx / dist;
+            mz = dz / dist;
+            len = 1;
+            if (order.kind === "go") {
+              if (dist > order.prev - 0.03) order.stuck += dt;
+              else order.stuck = 0;
+              order.prev = dist;
+              if (order.stuck > 0.45) engageRef.current = null;
+            }
+          } else if (order.kind === "go") {
+            engageRef.current = null;
+          } else if (order.kind === "fight") {
+            autoHit = styleNow !== "kazma" && styleNow !== "olta";
+            const face = Math.atan2(-dx / dist, -dz / dist);
+            const diff = Math.atan2(Math.sin(face - sim.yaw), Math.cos(face - sim.yaw));
+            sim.yaw += diff * (1 - Math.exp(-10 * dt));
+          } else {
+            const role = order.role;
+            const mentor = order.mentor;
+            const ax = order.x;
+            const az = order.z;
+            engageRef.current = null;
+            if (role === "vein") useRpg.getState().selectVein(ax, az);
+            else if (role === "stall") openStallView(mentor || "mine");
+            else {
+              useRpg.getState().setNear(role, mentor);
+              useRpg.getState().interact();
+            }
+          }
+        }
+      }
       const movingNow = len > 0.08;
       const sprintHeld = held("ShiftLeft") || held("ShiftRight") || input.sprint || input.joyY > 0.82;
       const sprinting = movingNow && sprintHeld && useRpg.getState().sta > 4;
@@ -2093,6 +2256,17 @@ function World() {
       } else if (!block) zoneNote.current = "";
       const span = bridgeName(sim.x, sim.z);
       if (span) useRpg.getState().notePlace(span);
+      if (!dungeonNow()) {
+        const realmNow = realmAt(sim.x, sim.z);
+        const hub = realmNow.id === "koy" ? FENCE_R : 34;
+        const outDist = Math.hypot(sim.x - realmNow.x, sim.z - realmNow.z);
+        const outside = outDist > hub + 4;
+        if (!fieldSide.current) fieldSide.current = outside ? "out" : "in";
+        else if (fieldSide.current === "in" && outside) {
+          fieldSide.current = "out";
+          useRpg.getState().loadMap(`${realmNow.name} av sahası`);
+        } else if (!outside && outDist < hub - 6) fieldSide.current = "in";
+      }
     }
 
     const rig = rigRef.current;
@@ -2189,8 +2363,18 @@ function World() {
     const style: WeaponStyle = weaponStyleOf(rpg.equipped.weapon?.id);
     const tooling = style === "kazma" || style === "olta" || rpg.chore != null;
     const ranged = style === "bow" || style === "staff";
-    const marked = readTarget().sel?.kind === "mob" || readTarget().sel?.kind === "meteor";
-    const spaceDown = playing && held("Space") && !tooling && !rpg.down && (!ranged || marked);
+    const selNow = readTarget().sel;
+    let huntDist = 99;
+    if (ranged && selNow?.kind === "meteor") {
+      const rock = meteorRef.current.find((row) => row.id === selNow.id && !row.broken);
+      huntDist = rock ? Math.hypot(rock.x - sim.x, rock.z - sim.z) : 99;
+    } else if (ranged && selNow?.kind === "mob") {
+      const mob = selNow.id === "dummy" ? dummyRef.current : beastsRef.current.find((beast) => beast.id === selNow.id && beast.alive) ?? null;
+      huntDist = mob?.alive ? Math.hypot(mob.root.position.x - sim.x, mob.root.position.z - sim.z) : 99;
+    }
+    const marked = selNow?.kind === "mob" || selNow?.kind === "meteor";
+    const tooFar = ranged && marked && huntDist > RANGED_HIT;
+    const spaceDown = playing && (held("Space") || autoHit) && !tooling && !rpg.down && (!ranged || (marked && !tooFar));
     const pressed = spaceDown && !spaceWas.current;
     spaceWas.current = spaceDown;
     const sprintingNow =
@@ -2200,6 +2384,11 @@ function World() {
     const runTarget = sprintingNow ? 1 : 0;
     runBlend.current += (runTarget - runBlend.current) * (1 - Math.exp(-6 * dt));
     const fx = fighterRef.current;
+    if (tooFar && fx) {
+      fx.swing = 0;
+      fx.queue = 0;
+      shotLatch.current = false;
+    }
     const cid = rpg.classId || "savasci";
     if (mountRef.current && cid !== classLoaded.current && cid !== classWanted.current) {
       void mountRef.current(cid);
@@ -2244,7 +2433,7 @@ function World() {
       punchArc(fx, fist.current, dt);
       if (fx.swing < 0.12) shotLatch.current = false;
       const release = style === "bow" ? fx.swing > 0.58 && fx.swing < 0.76 : style === "staff" && fx.swing > 0.3 && fx.swing < 0.48;
-      if (release && !shotLatch.current && modelRef.current) {
+      if (release && !shotLatch.current && modelRef.current && !tooFar) {
         shotLatch.current = true;
         const origin = _aim.copy(fist.current);
         if (origin.y < groundY(sim.x, sim.z, true) + 0.45) origin.set(sim.x, groundY(sim.x, sim.z, true) + 1.25, sim.z);
@@ -2255,30 +2444,34 @@ function World() {
             : sel?.kind === "mob" && dummyRef.current?.alive
               ? dummyRef.current
               : null;
-        const home = mark && "id" in mark && typeof mark.id === "string" ? mark.id : mark ? "dummy" : "";
         const fxw = -Math.sin(sim.yaw);
         const fzw = -Math.cos(sim.yaw);
-        if (mark) {
-          const p = mark.root.position;
-          _look.set(p.x - origin.x, p.y + 1.05 - origin.y, p.z - origin.z);
-        } else _look.set(fxw, 0.04, fzw);
         const shot = useRpg.getState().punch();
+        const markDist = mark ? Math.hypot(mark.root.position.x - sim.x, mark.root.position.z - sim.z) : 99;
+        const aimed = mark && markDist <= RANGED_HIT ? mark : null;
         const pickedMeteor =
           sel?.kind === "meteor"
-            ? meteorRef.current.find((row) => !row.broken && row.id === sel.id && Math.hypot(row.x - sim.x, row.z - sim.z) < 16)
+            ? meteorRef.current.find((row) => !row.broken && row.id === sel.id && Math.hypot(row.x - sim.x, row.z - sim.z) <= RANGED_HIT)
             : null;
         const rock =
           pickedMeteor ??
-          meteorRef.current.find((row) => {
-            if (row.broken) return false;
-            const dx = row.x - sim.x;
-            const dz = row.z - sim.z;
-            const dist = Math.hypot(dx, dz);
-            if (dist > 16 || dist < 0.4) return false;
-            return (dx * fxw + dz * fzw) / dist > 0.72;
-          });
-        if (rock && !mark) _look.set(rock.x - origin.x, rock.mesh.position.y + 1.1 - origin.y, rock.z - origin.z);
-        if (rock) chipMeteor.current(rock, shot.dmg);
+          (aimed
+            ? null
+            : meteorRef.current.find((row) => {
+                if (row.broken) return false;
+                const dx = row.x - sim.x;
+                const dz = row.z - sim.z;
+                const dist = Math.hypot(dx, dz);
+                if (dist > RANGED_HIT || dist < 0.4) return false;
+                return (dx * fxw + dz * fzw) / dist > 0.72;
+              }));
+        if (aimed) {
+          const p = aimed.root.position;
+          _look.set(p.x - origin.x, p.y + 1.05 - origin.y, p.z - origin.z);
+        } else if (rock) {
+          _look.set(rock.x - origin.x, rock.mesh.position.y + 1.15 - origin.y, rock.z - origin.z);
+        } else _look.set(fxw, 0.04, fzw);
+        const home = aimed && "id" in aimed && typeof aimed.id === "string" ? aimed.id : aimed ? "dummy" : rock ? rock.id : "";
         if (style === "bow") combatRef.current?.fireArrow(origin, _look, shot.dmg, shot.crit, home);
         else if (style === "staff") combatRef.current?.fireBolt(origin, _look, shot.dmg, shot.crit, home);
       }
@@ -2324,6 +2517,33 @@ function World() {
           if (!beast.alive) useRpg.getState().noteKill(beast.specId, beast.level);
         }
       };
+      const riderNow = useRpg.getState();
+      const cifte = riderNow.riding && riderNow.steed ? Math.max(0, Math.min(32, riderNow.mountSkills?.cifte || 0)) : 0;
+      const canKick = Boolean(riderNow.riding && riderNow.steed && !riderNow.down && !riderNow.mapLoad);
+      const forced = canKick ? takeMountKick() : null;
+      if ((cifte > 0 || forced) && !riderNow.down && !riderNow.mapLoad) {
+        if (forced) horseKick.current = 0;
+        horseKick.current -= dt;
+        if (horseKick.current <= 0) {
+          const reach = forced ? 3.3 + (forced.rank || 0) * 0.04 : 2.4 + cifte * 0.03;
+          let best: Beast | null = null;
+          let bestD = reach;
+          for (const beast of beastsRef.current) {
+            if (!beast.alive) continue;
+            const d = Math.hypot(beast.root.position.x - sim.x, beast.root.position.z - sim.z);
+            if (d <= bestD) {
+              best = beast;
+              bestD = d;
+            }
+          }
+          const rank = forced?.rank || cifte;
+          if (best) {
+            horseKick.current = Math.max(1.35, 2.8 - Math.max(cifte, rank) * 0.04);
+            const dmg = forced ? Math.round(14 + rank * 2.4 + riderNow.level * 0.45) : Math.round(8 + cifte * 1.6 + riderNow.level * 0.35);
+            landRef.current(best, dmg, false);
+          } else horseKick.current = 0.35;
+        }
+      } else horseKick.current = 0;
       const cast = takeCast();
       if (cast) {
         const rpgNow = useRpg.getState();
@@ -2335,14 +2555,16 @@ function World() {
         else if (rpgNow.riding) miss("At üzerinde yetenek kullanılamaz");
         else {
         const classId = rpgNow.classId;
-        const reach = classId === "okcu" ? 22 : classId === "buyucu" ? 16 : classId === "ninja" ? 4.2 : 4.4;
+        const reach = classId === "okcu" || classId === "buyucu" ? RANGED_HIT : classId === "ninja" ? 4.2 : 4.4;
         const melee = classId === "savasci" || classId === "ninja";
         const { duel } = readTarget();
         const foe = duel.phase === "live" ? remotes.get(duel.id) : undefined;
         const foeDist = foe ? Math.hypot(foe.x - sim.x, foe.z - sim.z) : 99;
         const sel = readTarget().sel;
         const beast = sel?.kind === "mob" ? beastsRef.current.find((row) => row.id === sel.id && row.alive) ?? null : null;
+        const rock = sel?.kind === "meteor" ? meteorRef.current.find((row) => row.id === sel.id && !row.broken) ?? null : null;
         const dist = beast ? Math.hypot(beast.root.position.x - sim.x, beast.root.position.z - sim.z) : 99;
+        const rockDist = rock ? Math.hypot(rock.x - sim.x, rock.z - sim.z) : 99;
         const critRoll = cast.crit && Math.random() < 0.42;
         const dmg = critRoll ? Math.round(cast.dmg * 1.65) : cast.dmg;
         const stamp = (target: Beast) => {
@@ -2354,7 +2576,7 @@ function World() {
           }
         };
         let landed = false;
-        if (!cast.aoe && classId !== "savasci" && classId !== "ninja" && !beast && !foe) {
+        if (!cast.aoe && classId !== "savasci" && classId !== "ninja" && !beast && !foe && !rock) {
           miss("Önce bir hedef seç");
         } else if (foe && foeDist < reach) {
           landed = true;
@@ -2363,7 +2585,7 @@ function World() {
           if (melee) combatRef.current?.slash(sim.x, 1.15, sim.z, sim.yaw, false);
         } else if (cast.aoe) {
           if (cast.id === "ok6") combatRef.current?.rain(sim.x, sim.z);
-          const limit = melee ? 4.2 : 6.2;
+          const limit = melee ? 4.2 : RANGED_HIT;
           for (const row of beastsRef.current) {
             if (!row.alive) continue;
             if (Math.hypot(row.root.position.x - sim.x, row.root.position.z - sim.z) >= limit) continue;
@@ -2373,6 +2595,16 @@ function World() {
           }
           if (melee) combatRef.current?.slash(sim.x, 1.15, sim.z, sim.yaw, false);
           if (!landed) miss("Etrafta hedef yok");
+        } else if (rock && rockDist < (melee ? 4.6 : reach)) {
+          landed = true;
+          for (let n = 0; n < cast.hits; n++) chipMeteor.current(rock, n === 0 ? dmg : Math.max(1, Math.round(dmg * 0.7)));
+          if (melee) combatRef.current?.slash(sim.x, 1.15, sim.z, sim.yaw, false);
+          else {
+            const origin = _aim.set(sim.x, 1.35, sim.z);
+            _look.set(rock.x - origin.x, rock.mesh.position.y + 1.15 - origin.y, rock.z - origin.z);
+            if (classId === "okcu") combatRef.current?.fireArrow(origin, _look, 0, false, rock.id);
+            else combatRef.current?.fireBolt(origin, _look, 0, false, rock.id);
+          }
         } else if (beast && dist < reach) {
           landed = true;
           stamp(beast);
@@ -2384,7 +2616,7 @@ function World() {
             if (classId === "okcu") combatRef.current?.fireArrow(origin, _look, 0, false, beast.id);
             else combatRef.current?.fireBolt(origin, _look, 0, false, beast.id);
           }
-        } else miss(beast || foe ? "Hedef menzil dışında" : "Önce bir hedef seç");
+        } else miss(beast || foe || rock ? "Hedef menzil dışında" : "Önce bir hedef seç");
         if (landed) commitSkill(cast.id);
         }
       }
@@ -2650,6 +2882,7 @@ function World() {
         rock.hp = rock.hpMax;
         rock.wave = 0;
         rock.mesh.visible = true;
+        placeMeteor(rock.id, rock.x, rock.z, true);
       }
       for (const beast of beastsRef.current) stepPuppet(beast, dt);
       let near: NearKind | null = null;
@@ -2855,7 +3088,7 @@ function World() {
         const rock = meteorRef.current.find((row) => row.id === sel.id && !row.broken);
         if (rock) {
           card = {
-            name: "Meteor Taşı",
+            name: rock.name,
             hp: rock.hp,
             hpMax: rock.hpMax,
             level: rock.level,
@@ -2865,7 +3098,7 @@ function World() {
           paintMob(
             camera,
             "mob-meteor",
-            `Meteor Taşı · Sv.${rock.level}`,
+            `${rock.name} · Sv.${rock.level}`,
             rock.hp,
             rock.hpMax,
             rock.x,
@@ -2892,6 +3125,10 @@ function World() {
         const foe = remotes.get(duel.id);
         if (foe) targets.push({ id: "duel", x: foe.x, y: 1.2, z: foe.z, alive: true });
       }
+      for (const rock of meteorRef.current) {
+        if (rock.broken) continue;
+        targets.push({ id: rock.id, x: rock.x, y: rock.mesh.position.y + 1.15, z: rock.z, alive: true });
+      }
       combatRef.current?.tick(dt, targets, (id, dmg, crit, x, y, z) => {
         if (dmg <= 0) return;
         if (id === "duel") {
@@ -2902,6 +3139,11 @@ function World() {
         if (id === "dummy" && dummy?.alive) {
           hitDummy(dummy, dmg);
           floatAt(x, y, z, `${crit ? "KRİT " : ""}${dmg}`, crit);
+          return;
+        }
+        const rock = meteorRef.current.find((row) => row.id === id && !row.broken);
+        if (rock) {
+          chipMeteor.current(rock, dmg);
           return;
         }
         const beast = beasts.find((row) => row.id === id && row.alive);
@@ -3145,7 +3387,7 @@ function World() {
       else {
         const who = useRpg.getState();
         const title = rankOf(who.fame);
-        const key = `${who.nick}|${who.level}|${title?.name || ""}`;
+        const key = `${who.nick}|${who.level}|${title?.name || ""}|${title?.glow ? 1 : 0}`;
         if (plate.dataset.who !== key) {
           plate.dataset.who = key;
           plate.replaceChildren();
@@ -3156,7 +3398,7 @@ function World() {
             const mark = document.createElement("span");
             mark.textContent = `  ${title.name}`;
             mark.style.color = title.color;
-            if (title.glow) mark.style.textShadow = `0 0 8px ${title.color}`;
+            if (title.glow) mark.className = "rank-name is-glow";
             plate.appendChild(mark);
           }
         }

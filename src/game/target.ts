@@ -35,7 +35,7 @@ let friends: Mate[] = [];
 let party: Mate[] = [];
 let board: TradeBoard = emptyBoard();
 let card: MobCard = null;
-let pick: { x: number; y: number } | null = null;
+let pick: { x: number; y: number; engage?: boolean } | null = null;
 let snap: Snap = { sel, duel, social, friends, party, trade: board, card };
 const listeners = new Set<() => void>();
 let sender: ((peerId: string, data: unknown) => void) | null = null;
@@ -72,8 +72,8 @@ export function readTarget() {
   return { sel, duel, social };
 }
 
-export function queuePick(x: number, y: number) {
-  pick = { x, y };
+export function queuePick(x: number, y: number, engage = false) {
+  pick = { x, y, engage };
 }
 
 export function takePick() {

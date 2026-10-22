@@ -1088,9 +1088,10 @@ export function mobBite(mobLevel, playerLevel) {
 	return Math.max(1, Math.round(base * scale * jitter));
 }
 export function mobXp(level, boss, playerLevel) {
-	const xp = Math.round(20 + Math.max(1, level) * 8);
+	const lv = Math.max(1, Math.floor(Number(level) || 1));
+	const xp = Math.round(4 + lv * 1.05);
 	const base = boss ? Math.round(xp * 2.15) : xp;
-	const gap = Math.max(0, Math.floor(playerLevel || level) - Math.floor(level));
+	const gap = Math.max(0, Math.floor(playerLevel || lv) - lv);
 	const scale = Math.pow(0.82, Math.min(30, gap));
 	return Math.max(1, Math.round(base * scale));
 }
@@ -1183,6 +1184,8 @@ function stepOutside(b, nx, nz) {
 	b.root.position.x = nx / push * VILLAGE_EDGE;
 	b.root.position.z = nz / push * VILLAGE_EDGE;
 }
+export const MOB_HIT = 12;
+export const RANGED_HIT = 10;
 export function tickBeast(b, dt, px, pz, cam, puppet = false) {
 	setBar(b.bar, b.alive ? b.hp / b.hpMax : 0, cam);
 	if (!b.alive) {
@@ -1210,7 +1213,7 @@ export function tickBeast(b, dt, px, pz, cam, puppet = false) {
 	b.phase += dt * (b.anger && dist < 11 ? 1 : .35);
 	b.root.userData.atk = Math.max(0, Number(b.root.userData.atk) || 0) - dt;
 	b.slow = Math.max(0, b.slow - dt);
-	const pace = b.speed * (b.slow > 0 ? .45 : 1);
+	const pace = b.speed * 1.04 * (b.slow > 0 ? .45 : 1);
 	if (b.shake > 0) {
 		b.shake -= dt;
 		b.body.position.y = Math.sin(b.shake * 40) * .08;
@@ -1268,7 +1271,7 @@ export function tickBeast(b, dt, px, pz, cam, puppet = false) {
 		return false;
 	}
 	if (!b.anger) {
-		const roam = b.boss ? 11 : Math.min(b.roam || 12, 12);
+		const roam = b.boss || b.pack >= 900 ? 11 : 5;
 		b.drift = (b.drift || 0) + dt * (0.22 + ((b.phase * 10) % 1) * 0.35);
 		const tx = b.homeX + Math.cos(b.drift) * roam * 0.72 + Math.sin(b.phase * 0.31) * roam * 0.28;
 		const tz = b.homeZ + Math.sin(b.drift * 0.83) * roam * 0.7 + Math.cos(b.phase * 0.27) * roam * 0.3;
@@ -1316,7 +1319,7 @@ export function tickBeast(b, dt, px, pz, cam, puppet = false) {
 		const pair = i < 2 ? 1 : -1;
 		leg.rotation.z = step * sign * pair * .55;
 	});
-	if (dist < 2.05) {
+	if (dist <= MOB_HIT) {
 		b.yaw = damp(b.yaw, face, 6, dt);
 		b.root.rotation.y = b.yaw - Math.PI / 2;
 		const lunge = Math.max(0, Math.sin(b.phase * 8));

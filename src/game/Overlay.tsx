@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { bindControlsTest, bagDragging, input, queueHop, readSim, setBagDrag } from "@/game/input";
+import { bindControlsTest, bagDragging, input, peekEnter, queueHop, readSim, releaseEnter, setBagDrag, subscribeEnter } from "@/game/input";
 import { useHud } from "@/game/hudStore";
 import { HudAnchor, applyHudScale, hudAnchors, placeWindow } from "@/game/hudScale";
+import { effectiveGfx, GFX_PRESETS, loadGfx, readGfx, subscribeGfx, writeGfx, type GfxPreset } from "@/game/settings";
+import { applyHudLayout, hudEditing, loadHud, nudgeHud, readHud, resetHud, setHudEdit, setHudScale, subscribeHud, type HudId } from "@/game/hudLayout";
+import { loadMusic, readMusic, subscribeMusic, writeMusic } from "@/game/audio";
 import { viewport } from "@/game/viewport";
 import { armTouchHit } from "@/game/touchHit";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
@@ -15,7 +18,74 @@ import { captureSave, readCarry, setCarry } from "@/game/rpg";
 import { saveCharacter, leaderboard, type BoardRow } from "@/game/account";
 import { dungeonNow, requestDungeon, subscribeDungeon } from "@/game/dungeon";
 import { useSession } from "@/game/session";
-import { CATALOG, CLASS_TREES, BOSSES, claimWeekly, className, displayName, ENHANCE, GATE_COST, giverLabel, itemStats, matForPlus, MENTORS, offerForNpc, activeForNpc, readyForNpc, nextStoryRow, questBoardRow, questGiver, questGuide, questMapFor, questMatchesNpc, openBagCount, PAGE_SIZE, rankOf, saleGold, SKILL_MAX, skillCdLeft, skillCdTotal, skillPreview, skillTier, SLOT_LABEL, STAT_HINT, STAT_LABEL, sumStats, upgradeChance, useRpg, weaponStyleOf, CRAFTS, type CharTab, type EquipSlot, type Item, type NearKind, type ShopKind, type StatKey } from "@/game/rpg";
+import { CATALOG, CLASS_TREES, BOSSES, claimWeekly, className, displayName, ENHANCE, GATE_COST, giverLabel, itemStats, matForPlus, MENTORS, offerForNpc, activeForNpc, readyForNpc, nextStoryRow, questBoardRow, questGiver, questGuide, questMapFor, questMatchesNpc, openBagCount, PAGE_SIZE, rankOf, saleGold, SKILL_MAX, skillCdLeft, skillCdTotal, skillPreview, skillTier, SLOT_LABEL, STAT_HINT, STAT_LABEL, sumStats, upgradeChance, useRpg, weaponStyleOf, CRAFTS, MOUNT_SKILLS, type CharTab, type EquipSlot, type Item, type NearKind, type ShopKind, type StatKey } from "@/game/rpg";
+import { signOut } from "@/lib/auth/client";
+import { DUNGEON_BOUND, HOUSES, MAP_MARKS, REALMS, VILLAGE_BOUND, realmAt, realmGate, realmHerald } from "@/game/world";
+import {
+  copySelected,
+  deleteSelected,
+  editArmed,
+  editVersion,
+  editView,
+  forgetEditable,
+  isCreativeUser,
+  nudgeByKey,
+  nudgeSelected,
+  publishLayout,
+  resetAllLayout,
+  resetSelected,
+  scaleSelected,
+  selectEditable,
+  setEditArmed,
+  setEditMask,
+  setMoveStep,
+  setRotStep,
+  setSelectedNumbers,
+  snapSelectedGround,
+  subscribeEdit,
+} from "@/game/creative";
+import {
+  addPatrolPoint,
+  eraseStudio,
+  forgetBlueprint,
+  patchSpawner,
+  placeBiome,
+  placeBlueprint,
+  placeGather,
+  placeMarker,
+  placePrefab,
+  placeSpawner,
+  placeWater,
+  placeZone,
+  PREFAB_THEMES,
+  rememberPrice,
+  saveBlueprint,
+  setBrush,
+  setHour,
+  setPaintId,
+  setPlaytest,
+  setPower,
+  setScatter,
+  setStudioTool,
+  setWaterKind,
+  setWaterR,
+  setZoneKind,
+  setZoneLevel,
+  setZoneR,
+  studioCapturesLeft,
+  studioPointer,
+  studioRedo,
+  studioUndo,
+  studioVersion,
+  studioView,
+  subscribeStudio,
+  toggleHit,
+  toggleMan,
+  toggleNav,
+  pinMannequin,
+} from "@/game/studio";
+import { priceOf } from "@/game/studio";
+
 let exitHandle = 0;
 function beginExit(kind: "char" | "out") {
   window.clearInterval(exitHandle);
@@ -84,75 +154,6 @@ function GoldLine({ line }: { line: string }) {
     </>
   );
 }
-import { effectiveGfx, GFX_PRESETS, loadGfx, readGfx, subscribeGfx, writeGfx, type GfxPreset } from "@/game/settings";
-import { loadMusic, readMusic, subscribeMusic, writeMusic } from "@/game/audio";
-import { signOut } from "@/lib/auth/client";
-import { DUNGEON_BOUND, HOUSES, MAP_MARKS, REALMS, VILLAGE_BOUND, realmAt, realmGate, realmHerald } from "@/game/world";
-import {
-  copySelected,
-  deleteSelected,
-  editArmed,
-  editVersion,
-  editView,
-  forgetEditable,
-  isCreativeUser,
-  nudgeByKey,
-  nudgeSelected,
-  publishLayout,
-  resetAllLayout,
-  resetSelected,
-  scaleSelected,
-  selectEditable,
-  setEditArmed,
-  setEditMask,
-  setMoveStep,
-  setRotStep,
-  setSelectedNumbers,
-  snapSelectedGround,
-  subscribeEdit,
-} from "@/game/creative";
-import {
-  addPatrolPoint,
-  eraseStudio,
-  forgetBlueprint,
-  patchSpawner,
-  placeBiome,
-  placeBlueprint,
-  placeGather,
-  placeMarker,
-  placePrefab,
-  placeSpawner,
-  placeWater,
-  placeZone,
-  PREFAB_THEMES,
-  rememberPrice,
-  saveBlueprint,
-  setBrush,
-  setHour,
-  setPaintId,
-  setPlaytest,
-  setPower,
-  setScatter,
-  setStudioTool,
-  setWaterKind,
-  setWaterR,
-  setZoneKind,
-  setZoneLevel,
-  setZoneR,
-  studioCapturesLeft,
-  studioPointer,
-  studioRedo,
-  studioUndo,
-  studioVersion,
-  studioView,
-  subscribeStudio,
-  toggleHit,
-  toggleMan,
-  toggleNav,
-  pinMannequin,
-} from "@/game/studio";
-import { priceOf } from "@/game/studio";
-
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
 }
@@ -199,7 +200,7 @@ function sellDragged(raw: string) {
   }
   if (!item || !sell) return;
   dragSold = true;
-  if (item.id === "starter-chest" || item.kind === "bag") {
+  if (item.id === "starter-chest" || item.kind === "bag" || item.kind === "book") {
     useRpg.setState({ toast: "Bu eşya satılmaz" });
     return;
   }
@@ -229,147 +230,60 @@ function clearMove() {
 
 let bootPlayed = false;
 
-const REEL = [
-  { name: "Ana Köy", sky: "#8ea4b8", land: "#6d7a56", water: "#3d6e86", wall: "#8a8176", note: "Çit, göl, ışınlayıcı" },
-  { name: "İkinci Köy", sky: "#d2b48a", land: "#b08a58", water: "#6a84a0", wall: "#7a6858", note: "Bozkır avları" },
-  { name: "Dolunay", sky: "#1b2436", land: "#243028", water: "#9eb6d0", wall: "#5c564e", note: "Ay ışığında orman" },
-  { name: "Sonsuz Ay", sky: "#07060e", land: "#16141c", water: "#7ec4d8", wall: "#3a3844", note: "Harabe ve ruhlar" },
-];
-
-function paintReel(ctx: CanvasRenderingContext2D, w: number, h: number, map: (typeof REEL)[number], t: number) {
-  const sky = ctx.createLinearGradient(0, 0, 0, h);
-  sky.addColorStop(0, map.sky);
-  sky.addColorStop(1, "#12110f");
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, w, h);
-  const drift = Math.sin(t * Math.PI * 2) * w * 0.04;
-  ctx.fillStyle = map.land;
-  ctx.beginPath();
-  ctx.ellipse(w * 0.5 + drift, h * 0.72, w * 0.72, h * 0.28, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = map.wall;
-  ctx.lineWidth = Math.max(4, w * 0.008);
-  ctx.beginPath();
-  ctx.ellipse(w * 0.5 + drift, h * 0.62, w * 0.34, h * 0.16, 0, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.fillStyle = map.water;
-  ctx.beginPath();
-  ctx.ellipse(w * 0.68 + drift, h * 0.66, w * 0.1, h * 0.045, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#6a5344";
-  for (let i = 0; i < 5; i++) {
-    const x = w * (0.28 + i * 0.08) + drift;
-    const y = h * 0.56 + Math.sin(i + t * 6) * 6;
-    ctx.fillRect(x, y, w * 0.045, h * 0.08);
-    ctx.fillStyle = "#8d7358";
-    ctx.beginPath();
-    ctx.moveTo(x - 6, y);
-    ctx.lineTo(x + w * 0.022, y - h * 0.04);
-    ctx.lineTo(x + w * 0.045 + 6, y);
-    ctx.fill();
-    ctx.fillStyle = "#6a5344";
-  }
-  ctx.fillStyle = "rgba(232,220,196,0.92)";
-  ctx.font = `600 ${Math.max(22, w * 0.04)}px serif`;
-  ctx.textAlign = "center";
-  ctx.fillText(map.name, w * 0.5, h * 0.22);
-  ctx.font = `${Math.max(13, w * 0.018)}px sans-serif`;
-  ctx.fillStyle = "rgba(232,220,196,0.72)";
-  ctx.fillText(map.note, w * 0.5, h * 0.22 + 28);
-}
-
-function MapReel() {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    let raf = 0;
-    const start = performance.now();
-    const frame = () => {
-      const now = performance.now();
-      const w = Math.max(2, canvas.clientWidth);
-      const h = Math.max(2, canvas.clientHeight);
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-      }
-      const span = 8;
-      const cycle = span * REEL.length;
-      const local = ((now - start) / 1000 + cycle) % cycle;
-      const index = Math.floor(local / span) % REEL.length;
-      const u = (local % span) / span;
-      const map = REEL[index] ?? REEL[0];
-      const next = REEL[(index + 1) % REEL.length] ?? map;
-      if (map) paintReel(ctx, w, h, map, u);
-      if (next && u > 0.86) {
-        ctx.globalAlpha = (u - 0.86) / 0.14;
-        paintReel(ctx, w, h, next, 0);
-        ctx.globalAlpha = 1;
-      }
-      raf = requestAnimationFrame(frame);
-    };
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-  return <canvas ref={ref} className="absolute inset-0 h-full w-full" aria-hidden="true" />;
-}
-
 function BootScreen({
-  done,
   sessionWaiting,
   sceneReady,
   worldReady,
 }: {
-  done: boolean;
   sessionWaiting: boolean;
   sceneReady: boolean;
   worldReady: boolean;
 }) {
-  const pctRef = useRef(8);
-  const [pct, setPct] = useState(8);
+  const pctRef = useRef(0);
+  const holdRef = useRef(0);
+  const startedRef = useRef(0);
+  const [pct, setPct] = useState(0);
   const [gone, setGone] = useState(bootPlayed);
   useEffect(() => {
-    if (bootPlayed) return;
-    const cap = window.requestAnimationFrame(() => {
-      bootPlayed = true;
-      setGone(true);
-    });
-    return () => window.cancelAnimationFrame(cap);
-  }, []);
-  useEffect(() => {
-    if (bootPlayed) return;
+    if (bootPlayed || gone) return;
+    if (!startedRef.current) startedRef.current = performance.now();
     let raf = 0;
     const tick = () => {
-      const goal = done ? 100 : sessionWaiting ? 30 : !sceneReady ? 54 : !worldReady ? 76 : 92;
+      const elapsed = performance.now() - startedRef.current;
+      const loaded = !sessionWaiting && sceneReady && worldReady;
+      const hung = elapsed > 12000;
+      const goal = loaded || hung ? 100 : sessionWaiting ? 28 : !sceneReady ? 52 : !worldReady ? 74 : 90;
       const gap = goal - pctRef.current;
-      if (gap > 0.2) pctRef.current = Math.min(goal, pctRef.current + Math.max(0.22, gap * 0.08));
-      if (done) pctRef.current = Math.min(100, pctRef.current + 1.8);
-      if (done && pctRef.current > 99.2) pctRef.current = 100;
+      if (gap > 0.05) pctRef.current = Math.min(goal, pctRef.current + Math.min(1.15, Math.max(0.45, gap * 0.08)));
+      if ((loaded || hung) && pctRef.current >= 99.4) pctRef.current = 100;
       setPct(pctRef.current);
-      if (pctRef.current >= 100) {
-        bootPlayed = true;
-        setGone(true);
-        return;
-      }
+      if (pctRef.current >= 100 && elapsed > 1600) {
+        if (!holdRef.current) holdRef.current = performance.now();
+        if (performance.now() - holdRef.current > 420) {
+          bootPlayed = true;
+          setGone(true);
+          return;
+        }
+      } else holdRef.current = 0;
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [done, sceneReady, sessionWaiting, worldReady]);
+  }, [gone, sceneReady, sessionWaiting, worldReady]);
   if (gone) return null;
-  const shown = Math.min(100, Math.round(pct));
+  const shown = Math.min(100, Math.floor(pct));
   return (
-    <div className="absolute inset-0 z-50 bg-black" data-ui>
+    <div className="absolute inset-0 z-[90] bg-black" data-ui>
       <img src="/boot.jpg" alt="" className="absolute inset-0 h-full w-full object-cover" />
+      <div className="absolute inset-0 bg-black/50" />
       <div className="absolute inset-x-0 bottom-[12%] flex flex-col items-center px-6">
+        <p className="mb-1 text-xs tracking-[0.35em] text-[#c9a15b]">ABİS</p>
         <p className="mb-1.5 text-[13px] font-semibold tracking-wide text-[#e7fdff]" style={{ textShadow: "0 0 10px #4df0ff" }}>
           {shown}%
         </p>
         <div className="h-3.5 w-[min(28rem,70vw)] overflow-hidden rounded-full border-2 border-[#3ad4e4] bg-black/75 p-px shadow-[0_0_18px_rgba(58,220,235,0.55)]">
           <div
-            className="h-full rounded-full transition-[width] duration-100"
+            className="h-full rounded-full"
             style={{
               width: `${shown}%`,
               background: "linear-gradient(90deg, #042f38 0%, #0c7f92 38%, #5eebf8 82%, #ffffff 100%)",
@@ -377,6 +291,193 @@ function BootScreen({
             }}
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+function EnterLoad() {
+  const name = useSyncExternalStore(subscribeEnter, peekEnter, () => "");
+  const pctRef = useRef(0);
+  const holdRef = useRef(0);
+  const [pct, setPct] = useState(0);
+  useEffect(() => {
+    if (!name) {
+      pctRef.current = 0;
+      holdRef.current = 0;
+      setPct(0);
+      return;
+    }
+    const started = performance.now();
+    let raf = 0;
+    const tick = () => {
+      const elapsed = performance.now() - started;
+      const goal = elapsed > 700 ? 100 : 62;
+      const gap = goal - pctRef.current;
+      if (gap > 0.05) pctRef.current = Math.min(goal, pctRef.current + Math.min(1.15, Math.max(0.5, gap * 0.08)));
+      if (elapsed > 1500 && pctRef.current >= 99.4) pctRef.current = 100;
+      setPct(pctRef.current);
+      if (pctRef.current >= 100 && elapsed > 1700) {
+        if (!holdRef.current) holdRef.current = performance.now();
+        if (performance.now() - holdRef.current > 420) {
+          releaseEnter();
+          return;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [name]);
+  if (!name) return null;
+  const shown = Math.min(100, Math.floor(pct));
+  return (
+    <div className="absolute inset-0 z-[90] bg-black" data-ui>
+      <img src="/boot.jpg" alt="" className="absolute inset-0 h-full w-full object-cover" />
+      <div className="absolute inset-0 bg-black/50" />
+      <div className="absolute inset-x-0 bottom-[12%] flex flex-col items-center px-6">
+        <p className="mb-1 text-xs tracking-[0.35em] text-[#c9a15b]">ABİS</p>
+        <p className="mb-1 text-sm text-[#e7fdff]">{name} yükleniyor</p>
+        <p className="mb-1.5 text-[13px] font-semibold tracking-wide text-[#e7fdff]" style={{ textShadow: "0 0 10px #4df0ff" }}>
+          {shown}%
+        </p>
+        <div className="h-3.5 w-[min(28rem,70vw)] overflow-hidden rounded-full border-2 border-[#3ad4e4] bg-black/75 p-px shadow-[0_0_18px_rgba(58,220,235,0.55)]">
+          <div
+            className="h-full rounded-full"
+            style={{
+              width: `${shown}%`,
+              background: "linear-gradient(90deg, #042f38 0%, #0c7f92 38%, #5eebf8 82%, #ffffff 100%)",
+              boxShadow: "0 0 14px #6df6ff",
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RotateGate() {
+  const [portrait, setPortrait] = useState(false);
+  useEffect(() => {
+    const sync = () => {
+      const touch = document.documentElement.hasAttribute("data-touch") || navigator.maxTouchPoints > 0;
+      setPortrait(touch && window.innerHeight > window.innerWidth + 40);
+    };
+    sync();
+    const lock = () => {
+      if (window.innerHeight <= window.innerWidth + 40) return;
+      const orient = screen.orientation as ScreenOrientation & { lock?: (mode: string) => Promise<void> };
+      if (!orient?.lock) return;
+      void orient.lock("landscape").catch(() => undefined);
+    };
+    window.addEventListener("resize", sync);
+    window.addEventListener("orientationchange", sync);
+    window.addEventListener("pointerdown", lock);
+    return () => {
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("orientationchange", sync);
+      window.removeEventListener("pointerdown", lock);
+    };
+  }, []);
+  if (!portrait) return null;
+  return (
+    <div className="rotate-gate" data-ui>
+      <div>
+        <div className="rotate-phone" />
+        <p className="font-display text-2xl text-[#f3efe8]">Telefonu yatay çevir</p>
+        <p className="mt-2 text-sm text-[#c9a15b]">Oyun dikey açılmaz.</p>
+      </div>
+    </div>
+  );
+}
+
+function GateIntro() {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    let raf = 0;
+    let last = performance.now();
+    const dots = Array.from({ length: 80 }, () => ({
+      x: Math.random(),
+      y: Math.random(),
+      r: Math.random() * 1.7 + 0.35,
+      s: 0.015 + Math.random() * 0.05,
+      a: 0.18 + Math.random() * 0.55,
+    }));
+    const frame = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const w = Math.max(2, canvas.clientWidth);
+      const h = Math.max(2, canvas.clientHeight);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      const t = now / 1000;
+      const sky = ctx.createLinearGradient(0, 0, 0, h);
+      sky.addColorStop(0, "#05060c");
+      sky.addColorStop(0.42, "#10141c");
+      sky.addColorStop(1, "#1c140e");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, w, h);
+      const mx = w * 0.78;
+      const my = h * 0.18;
+      const glow = ctx.createRadialGradient(mx, my, 0, mx, my, Math.min(w, h) * 0.42);
+      glow.addColorStop(0, "rgba(201, 161, 91, 0.28)");
+      glow.addColorStop(0.45, "rgba(94, 180, 200, 0.08)");
+      glow.addColorStop(1, "rgba(0, 0, 0, 0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, w, h);
+      ctx.beginPath();
+      ctx.fillStyle = "#f4efe4";
+      ctx.arc(mx, my, Math.min(w, h) * 0.038, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(201, 161, 91, 0.55)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.ellipse(w * 0.5, h * 0.58, w * 0.32, Math.max(18, h * 0.07), Math.sin(t * 0.25) * 0.2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(94, 235, 248, 0.28)";
+      ctx.beginPath();
+      ctx.ellipse(w * 0.5, h * 0.58, w * 0.2, Math.max(12, h * 0.045), -Math.sin(t * 0.3) * 0.35, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = "#090b10";
+      ctx.beginPath();
+      ctx.moveTo(0, h);
+      ctx.lineTo(0, h * 0.72);
+      for (let x = 0; x <= w; x += 10) {
+        const n = Math.sin(x * 0.008 + 0.6) * h * 0.035 + Math.sin(x * 0.021) * h * 0.012;
+        ctx.lineTo(x, h * 0.7 + n);
+      }
+      ctx.lineTo(w, h);
+      ctx.fill();
+      const haze = ctx.createLinearGradient(0, h * 0.62, 0, h * 0.78);
+      haze.addColorStop(0, "rgba(201, 161, 91, 0)");
+      haze.addColorStop(1, "rgba(201, 161, 91, 0.16)");
+      ctx.fillStyle = haze;
+      ctx.fillRect(0, h * 0.62, w, h * 0.16);
+      for (const dot of dots) {
+        dot.y -= dot.s * dt;
+        if (dot.y < -0.02) dot.y = 1.02;
+        ctx.fillStyle = `rgba(236, 226, 206, ${dot.a})`;
+        ctx.beginPath();
+        ctx.arc(dot.x * w, dot.y * h, dot.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return (
+    <div className="absolute inset-0" aria-hidden="true">
+      <canvas ref={ref} className="absolute inset-0 h-full w-full" />
+      <div className="pointer-events-none absolute inset-x-0 top-[7%] text-center">
+        <p className="text-[11px] tracking-[0.48em] text-[#c9a15b]">SONSUZ GECE</p>
+        <p className="mt-1 font-display text-5xl text-[#f3efe8]">Abis</p>
       </div>
     </div>
   );
@@ -397,12 +498,6 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
   }, [isPending]);
   const ready = useHud((s) => s.ready);
   const sessionWaiting = isPending && !sessionSlow;
-  const [bootGiveUp, setBootGiveUp] = useState(false);
-  useEffect(() => {
-    const id = window.setTimeout(() => setBootGiveUp(true), 4500);
-    return () => window.clearTimeout(id);
-  }, []);
-  const bootDone = bootGiveUp || !sessionWaiting;
   const activeId = useSession((s) => s.activeId);
   const nick = useRpg((s) => s.nick);
   const level = useRpg((s) => s.level);
@@ -433,7 +528,7 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
   const [boardOpen, setBoardOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [questHud, setQuestHud] = useState(true);
-  const [menu, setMenu] = useState<null | "root" | "opts">(null);
+  const [menu, setMenu] = useState<null | "root" | "opts" | "hud">(null);
   const menuRef = useRef(menu);
   const friendsRef = useRef(false);
   const eTap = useRef(0);
@@ -451,6 +546,7 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
       applyHudScale();
       viewport.sync();
     };
+    loadHud();
     sync();
     window.addEventListener("resize", sync);
     window.addEventListener("orientationchange", sync);
@@ -636,6 +732,10 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
       e.preventDefault();
       return;
     }
+    if (e.button === 0 && e.pointerType !== "touch") {
+      queuePick(e.clientX, e.clientY, true);
+      return;
+    }
     const mouseLook = e.pointerType !== "touch" && e.button === 2;
     const touchLook = e.pointerType === "touch";
     if (!mouseLook && !touchLook) return;
@@ -675,7 +775,8 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
     lookPtr.current = null;
     drag.current = null;
     input.look = false;
-    if ((click || tapped) && useHud.getState().playing) queuePick(e.clientX, e.clientY);
+    if (click && useHud.getState().playing) queuePick(e.clientX, e.clientY, false);
+    else if (tapped && useHud.getState().playing) queuePick(e.clientX, e.clientY, true);
   };
   const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     if (!playing) return;
@@ -732,7 +833,9 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
       onPointerCancel={onPointerUp}
       onWheel={onWheel}
     >
-      {!playing ? <BootScreen done={bootDone} sessionWaiting={sessionWaiting} sceneReady={sceneReady} worldReady={ready} /> : null}
+      <BootScreen sessionWaiting={sessionWaiting} sceneReady={sceneReady} worldReady={ready} />
+      <EnterLoad />
+      <RotateGate />
       {playing && activeId ? <NetLive key={user?.id || nick || "oyuncu"} nick={nick} account={user?.id} /> : null}
       {playing ? (
         <>
@@ -757,7 +860,7 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
             <DungeonBanner />
             <Prompt />
             <ToolHud />
-            <div className="hud-side pointer-events-none absolute z-10">
+            <div className="hud-side pointer-events-none absolute z-10" data-hud="quests">
               <QuestTracker open={questHud} />
               <MailNotes />
             </div>
@@ -768,7 +871,8 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
             <BossPrompt />
             <EdgeBar onSettings={() => setMenu((open) => (open ? null : "root"))} onFriends={() => setFriendsOpen((open) => !open)} onBoard={() => setBoardOpen((open) => !open)} onGuide={() => setGuideOpen((open) => !open)} />
             <CreativeDock />
-            {menu ? <SettingsMenu mode={menu} onMode={setMenu} onClose={() => setMenu(null)} onFriends={() => setFriendsOpen((open) => !open)} /> : null}
+            {menu ? <SettingsMenu mode={menu} onMode={setMenu} onClose={() => setMenu(null)} /> : null}
+            <HudMover />
             <SelectBar />
             <SocialHud />
             <WhisperDock />
@@ -783,6 +887,7 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
               <div
                 data-joy
                 className="joy-stick hand-only absolute rounded-full border border-border bg-surface/80"
+                data-hud="joy"
                 onPointerDown={joyDown}
                 onPointerMove={joyMove}
                 onPointerUp={joyUp}
@@ -804,7 +909,7 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
         </>
       ) : (
         <div className="absolute inset-0 overflow-hidden">
-          <MapReel />
+          <GateIntro />
           <div className="absolute inset-0 grid place-items-center overflow-x-hidden overflow-y-auto bg-black/40 px-4 py-6 touch-pan-y">
           {sessionWaiting ? null : !user ? (
             <AuthScreens />
@@ -1129,7 +1234,7 @@ function TouchCluster() {
   const style = weaponStyleOf(weaponId);
   const label = style === "kazma" ? "Kaz" : style === "olta" ? "Tut" : "Vur";
   return (
-    <div className="hand-cluster" data-ui>
+    <div className="hand-cluster" data-ui data-hud="attack">
       <div className="hand-actions">
         {steed ? (
           <button
@@ -1188,7 +1293,7 @@ function EdgeBar({ onSettings, onFriends, onBoard, onGuide }: { onSettings: () =
     </button>
   );
   return (
-    <div className="edge-bar" data-ui>
+    <div className="edge-bar" data-ui data-hud="edge">
       {item("stat", "Statü", () => useRpg.getState().showChar("stats"))}
       {item("skill", "Yetenekler", () => useRpg.getState().showChar("skills"))}
       {item("bag", "Envanter", () => useRpg.getState().toggleInv())}
@@ -1314,7 +1419,7 @@ function Vitals() {
   const fame = useRpg((s) => s.fame);
   const rank = rankOf(fame);
   return (
-    <div className="hud-vitals pointer-events-auto absolute z-20">
+    <div className="hud-vitals pointer-events-auto absolute z-20" data-hud="vitals">
       <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface/90 p-3">
         <Bar label="CAN" value={hp} max={hpMax} tone="bg-hp" />
         <Bar label="MANA" value={mana} max={manaMax} tone="bg-mp" />
@@ -1648,6 +1753,7 @@ function Hotbar() {
   const pots = useRpg((s) => s.pots);
   const skills = useRpg((s) => s.skills);
   const classId = useRpg((s) => s.classId);
+  const mountSkills = useRpg((s) => s.mountSkills);
   const base = useRpg((s) => s.base);
   const invested = useRpg((s) => s.invested);
   const equipped = useRpg((s) => s.equipped);
@@ -1658,7 +1764,8 @@ function Hotbar() {
   const [tip, setTip] = useState<{ id: string; x: number; y: number } | null>(null);
   const names = new Map(CLASS_TREES[classId].flatMap((tree) => tree.skills.map((sk) => [sk.id, sk] as const)));
   const shown = tip ? names.get(tip.id) : undefined;
-  const preview = tip ? skillPreview(tip.id, skills[tip.id] ?? 0, totals) : null;
+  const mountShown = tip ? MOUNT_SKILLS.find((row) => row.id === tip.id) : undefined;
+  const preview = tip && !mountShown ? skillPreview(tip.id, skills[tip.id] ?? 0, totals) : null;
   const pct = Math.max(0, Math.min(1, xp / Math.max(1, xpTo)));
   const keyOf = (index: number) => String(index + 1);
   const [xpOn, setXpOn] = useState(false);
@@ -1668,7 +1775,7 @@ function Hotbar() {
     return () => window.clearInterval(timer);
   }, []);
   return (
-    <div data-ui className="hud-hotbar-wrap pointer-events-auto absolute z-20" onPointerDown={(e) => e.stopPropagation()}>
+    <div data-ui className="hud-hotbar-wrap pointer-events-auto absolute z-20" data-hud="hotbar" onPointerDown={(e) => e.stopPropagation()}>
       <div className="xp-split" onMouseEnter={() => setXpOn(true)} onMouseLeave={() => setXpOn(false)}>
         {[0, 1, 2, 3].map((part) => {
           const fill = Math.max(0, Math.min(1, pct * 4 - part));
@@ -1688,7 +1795,13 @@ function Hotbar() {
           <em>gerekli / anlık</em>
         </div>
       ) : null}
-      {shown && preview && tip ? (
+      {mountShown && tip ? (
+        <div className="skill-tip rounded-md border border-border bg-surface/95 p-2 text-left text-xs text-fg shadow-lg">
+          <p className="text-gold">At becerisi · {mountShown.name}</p>
+          <p className="mt-1 text-muted">{mountShown.line}</p>
+          <p className="text-muted">Seviye {skillTier(mountSkills[mountShown.id] ?? 0)} · {skillCdLeft(mountShown.id) > 0.05 ? `${skillCdLeft(mountShown.id).toFixed(1)} sn` : "Hazır"}</p>
+        </div>
+      ) : shown && preview && tip ? (
         <div className="skill-tip rounded-md border border-border bg-surface/95 p-2 text-left text-xs text-fg shadow-lg">
           <p className="text-gold">{shown.name}</p>
           <p className="mt-1 text-muted">{shown.desc}</p>
@@ -1922,26 +2035,38 @@ function MailNotes() {
   );
 }
 
-function SettingsMenu({ mode, onMode, onClose, onFriends }: { mode: "root" | "opts"; onMode: (mode: "root" | "opts") => void; onClose: () => void; onFriends: () => void }) {
+function SettingsMenu({ mode, onMode, onClose }: { mode: "root" | "opts" | "hud"; onMode: (mode: "root" | "opts" | "hud") => void; onClose: () => void }) {
   const gfx = useSyncExternalStore(subscribeGfx, readGfx, readGfx);
   const live = useSyncExternalStore(subscribeGfx, effectiveGfx, effectiveGfx);
   const music = useSyncExternalStore(subscribeMusic, readMusic, readMusic);
+  const hud = useSyncExternalStore(subscribeHud, readHud, readHud);
+  const placing = useSyncExternalStore(subscribeHud, hudEditing, () => false);
   useEffect(() => {
     loadGfx();
     loadMusic();
+    loadHud();
   }, []);
+  useEffect(() => () => setHudEdit(false), []);
   const go = (run: () => void) => {
+    setHudEdit(false);
     onClose();
     run();
   };
   const pickPreset = (name: Exclude<GfxPreset, "custom">) => writeGfx({ ...GFX_PRESETS[name], auto: false });
+  const close = () => {
+    setHudEdit(false);
+    onClose();
+  };
   return (
-    <div data-ui className={`settings-menu hud-window pointer-events-auto absolute top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-surface/95 p-3 ${mode === "opts" ? "is-gfx w-[min(22rem,92vw)]" : "w-[min(18rem,86vw)]"}`} onPointerDown={(e) => e.stopPropagation()}>
+    <div data-ui className={`settings-menu hud-window pointer-events-auto absolute top-1/2 left-1/2 z-[80] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-surface/95 p-3 ${mode === "root" ? "w-[min(18rem,86vw)]" : "is-gfx w-[min(22rem,92vw)]"}`} onPointerDown={(e) => e.stopPropagation()}>
       {mode === "root" ? (
         <div className="flex flex-col gap-1.5">
           <p className="mb-1 text-xs tracking-widest text-gold">Ayarlar</p>
           <button type="button" className="rounded-md border border-border px-3 py-2 text-left text-sm" onClick={() => onMode("opts")}>
             Oyun Seçenekleri
+          </button>
+          <button type="button" className="rounded-md border border-border px-3 py-2 text-left text-sm" onClick={() => onMode("hud")}>
+            Arayüz
           </button>
           <button type="button" className="rounded-md border border-border px-3 py-2 text-left text-sm" onClick={() => go(() => beginExit("char"))}>
             Karakter Değişikliği
@@ -1961,12 +2086,50 @@ function SettingsMenu({ mode, onMode, onClose, onFriends }: { mode: "root" | "op
           >
             Oyun Sonu
           </button>
-          <button type="button" className="rounded-md border border-gold px-3 py-2 text-left text-sm text-gold" onClick={onClose}>
+          <button type="button" className="rounded-md border border-gold px-3 py-2 text-left text-sm text-gold" onClick={close}>
             İptal
           </button>
         </div>
+      ) : mode === "hud" ? (
+        <div className="settings-scroll flex flex-col gap-2 text-sm">
+          <p className="text-xs tracking-widest text-gold">Arayüz</p>
+          <label className="flex items-center justify-between gap-2">
+            Boyut
+            <span className="flex items-center gap-2">
+              <input
+                type="range"
+                min={0.6}
+                max={1.6}
+                step={0.05}
+                value={hud.scale}
+                onChange={(e) => {
+                  setHudScale(Number(e.target.value));
+                  applyHudScale();
+                }}
+              />
+              <span className="w-8 text-right text-xs tabular-nums text-gold">{Math.round(hud.scale * 100)}</span>
+            </span>
+          </label>
+          <button type="button" className={`rounded-md border px-3 py-1.5 text-left ${placing ? "border-gold text-gold" : "border-border"}`} onClick={() => setHudEdit(!placing)}>
+            {placing ? "Yerleştirme açık · bitir" : "Sürükleyerek yerleştir"}
+          </button>
+          <p className="text-[11px] leading-snug text-muted">Açıkken can, harita, görevler, kısayol, yön, saldırı ve menü parçalarını tutup taşı. Altın çerçeve sürüklenen parçadır.</p>
+          <button
+            type="button"
+            className="rounded-md border border-border px-3 py-1.5 text-left"
+            onClick={() => {
+              resetHud();
+              applyHudScale();
+            }}
+          >
+            Sıfırla
+          </button>
+          <button type="button" className="rounded-md border border-border px-3 py-1.5 text-left" onClick={() => { setHudEdit(false); onMode("root"); }}>
+            Geri
+          </button>
+        </div>
       ) : (
-        <div className="flex flex-col gap-2 overflow-hidden text-sm">
+        <div className="settings-scroll flex flex-col gap-2 text-sm">
           <p className="text-xs tracking-widest text-gold">Grafik seçenekleri</p>
           <div className="grid grid-cols-4 gap-1">
             {(
@@ -2051,6 +2214,50 @@ function SettingsMenu({ mode, onMode, onClose, onFriends }: { mode: "root" | "op
       )}
     </div>
   );
+}
+
+function HudMover() {
+  const on = useSyncExternalStore(subscribeHud, hudEditing, () => false);
+  const drag = useRef<{ id: HudId; x: number; y: number; pid: number } | null>(null);
+  useEffect(() => {
+    if (!on) return;
+    const down = (e: PointerEvent) => {
+      const node = (e.target as HTMLElement | null)?.closest?.("[data-hud]") as HTMLElement | null;
+      if (!node) return;
+      const id = node.dataset.hud as HudId | undefined;
+      if (!id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      drag.current = { id, x: e.clientX, y: e.clientY, pid: e.pointerId };
+      node.setPointerCapture?.(e.pointerId);
+    };
+    const move = (e: PointerEvent) => {
+      const row = drag.current;
+      if (!row || e.pointerId !== row.pid) return;
+      const dx = e.clientX - row.x;
+      const dy = e.clientY - row.y;
+      if (dx === 0 && dy === 0) return;
+      row.x = e.clientX;
+      row.y = e.clientY;
+      nudgeHud(row.id, dx, dy);
+    };
+    const up = (e: PointerEvent) => {
+      if (drag.current?.pid === e.pointerId) drag.current = null;
+    };
+    document.addEventListener("pointerdown", down, true);
+    document.addEventListener("pointermove", move, true);
+    document.addEventListener("pointerup", up, true);
+    document.addEventListener("pointercancel", up, true);
+    return () => {
+      drag.current = null;
+      document.removeEventListener("pointerdown", down, true);
+      document.removeEventListener("pointermove", move, true);
+      document.removeEventListener("pointerup", up, true);
+      document.removeEventListener("pointercancel", up, true);
+    };
+  }, [on]);
+  if (!on) return null;
+  return <p className="hud-edit-banner">Arayüzü sürükle · altın çerçeveli parçalar taşınır</p>;
 }
 
 function PartyWindow() {
@@ -2460,6 +2667,7 @@ function WorldMap({ zone, big, onToggle }: { zone: string; big: boolean; onToggl
       <button
         type="button"
         className="block"
+        data-hud={big ? undefined : "map"}
         onClick={(e) => {
           if (skipClick.current) {
             skipClick.current = false;
@@ -2836,9 +3044,11 @@ function Tip({ item, x, y }: { item: Item; x: number; y: number }) {
               ? "İksir"
               : item.kind === "fish"
                 ? "Balık"
-                : item.kind === "bag"
-                  ? "Eşya"
-                  : `${SLOT_LABEL[item.slot] ?? "Eşya"}${item.kind === "gear" || !item.kind ? ` · Sv.${item.level}` : ""}`}
+                : item.kind === "book"
+                  ? "Yetenek Kitabı"
+                  : item.kind === "bag"
+                    ? "Eşya"
+                    : `${SLOT_LABEL[item.slot] ?? "Eşya"}${item.kind === "gear" || !item.kind ? ` · Sv.${item.level}` : ""}`}
         {item.plus > 0 ? ` · +${item.plus}` : ""}
       </p>
       {rows.length ? <p>{rows.join(" · ")}</p> : null}
@@ -3039,17 +3249,18 @@ function Inventory({ docked = false }: { docked?: boolean }) {
     const rect = panel?.getBoundingClientRect();
     const under = document.elementFromPoint(event.clientX, event.clientY);
     const ontoSmith = Boolean(under?.closest("[data-smith]"));
+    const ontoBench = Boolean(under?.closest("[data-bench]"));
     const ontoStall = Boolean(under?.closest("[data-stall]"));
     const ontoTab = Boolean(under?.closest("[data-bag-tab]"));
     const ontoBelt = Boolean(under?.closest("[data-belt]"));
     const ontoVendor = Boolean(under?.closest("[data-vendor]"));
     const outside = !!rect && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom);
-    if (ontoVendor) {
+    if (ontoVendor && !ontoBench && !ontoSmith) {
       keepCarry = true;
       sellDragged(dragText(event.dataTransfer));
     }
-    if (ontoTab || ontoBelt) keepCarry = true;
-    if (outside && !keepCarry && !ontoSmith && !ontoVendor && !ontoStall && !ontoTab && !ontoBelt) {
+    if (ontoTab || ontoBelt || ontoBench) keepCarry = true;
+    if (outside && !keepCarry && !ontoSmith && !ontoBench && !ontoVendor && !ontoStall && !ontoTab && !ontoBelt) {
       openAsk("Eşyayı yere atmak istiyor musunuz?", () => dropBag(index));
     }
     keepCarry = false;
@@ -3363,6 +3574,7 @@ function Character() {
   const invested = useRpg((s) => s.invested);
   const equipped = useRpg((s) => s.equipped);
   const skills = useRpg((s) => s.skills);
+  const mountSkills = useRpg((s) => s.mountSkills);
   const skillPoints = useRpg((s) => s.skillPoints);
   const mentored = useRpg((s) => s.mentored);
   const chosenTree = useRpg((s) => s.chosenTree);
@@ -3371,6 +3583,7 @@ function Character() {
   const fame = useRpg((s) => s.fame);
   const classId = useRpg((s) => s.classId);
   const [questPage, setQuestPage] = useState(0);
+  const [questTrack, setQuestTrack] = useState<"ana" | "yan" | "av">("ana");
   const totals = sumStats({ base, invested, equipped, level, skills });
   const rank = rankOf(fame);
   const [pos, setPos] = useState(() => charPin.place(typeof window === "undefined" ? 1280 : window.innerWidth, typeof window === "undefined" ? 800 : window.innerHeight));
@@ -3447,14 +3660,34 @@ function Character() {
       ) : null}
       {charTab === "quests" ? (
         <div className="flex flex-col gap-2">
+          <div className="flex gap-1">
+            {([
+              ["ana", "Ana Görev"],
+              ["yan", "Yan Görev"],
+              ["av", "Av Görevleri"],
+            ] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={questTrack === id ? "rounded-md border border-gold px-2 py-1 text-[11px] text-gold" : "rounded-md border border-border px-2 py-1 text-[11px] text-muted"}
+                onClick={() => {
+                  setQuestTrack(id);
+                  setQuestPage(0);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {(() => {
-            const openQuests = quests.filter((quest) => !quest.claimed);
+            const openQuests = quests.filter((quest) => !quest.claimed && (quest.track || "av") === questTrack);
             const qPages = Math.max(1, Math.ceil(openQuests.length / 4));
             const qSafe = Math.min(questPage, qPages - 1);
             const view = openQuests.slice(qSafe * 4, qSafe * 4 + 4);
+            const empty = questTrack === "ana" ? "Ana görev, veren NPC'den alınır. Av ve yan görevle aynı anda durur." : questTrack === "yan" ? "Yan görev NPC'den alınır. Meteor kırma seviyene göre kendiliğinden gelir." : "Av görevi seviyene göre kendiliğinden gelir.";
             return (
               <>
-                {openQuests.length === 0 ? <p className="text-xs text-muted">Sıradaki görev, veren NPC'den alınır.</p> : null}
+                {openQuests.length === 0 ? <p className="text-xs text-muted">{empty}</p> : null}
                 {view.map((quest) => (
                   <div key={quest.id} className="rounded-md border border-border bg-bg/70 px-2 py-1.5 text-xs">
                     <p className="text-gold">{quest.title}{quest.minLevel ? ` · Sv.${quest.minLevel}` : ""}</p>
@@ -3514,6 +3747,38 @@ function Character() {
               </div>
             );
           })}
+          <div className={chosenTree ? "mt-2" : "col-span-2 mt-2"}>
+            <p className="mb-1 text-xs text-gold">At becerisi</p>
+            <div className="flex flex-col gap-1">
+              {MOUNT_SKILLS.map((sk) => {
+                const rank = mountSkills[sk.id] ?? 0;
+                return (
+                  <div
+                    key={sk.id}
+                    draggable={rank > 0}
+                    title={sk.line}
+                    onDragStart={(e) => {
+                      if (rank <= 0) {
+                        e.preventDefault();
+                        return;
+                      }
+                      e.dataTransfer.setData("text/plain", `skill:${sk.id}`);
+                      e.dataTransfer.effectAllowed = "copy";
+                    }}
+                    className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-border bg-bg/70 px-2 py-1.5 text-xs"
+                  >
+                    <SkillMark id={sk.id} />
+                    <span className="min-w-0">
+                      {sk.name}
+                      <span className="block text-[10px] text-muted">{sk.line}</span>
+                    </span>
+                    <b className="tabular-nums text-gold">{rank > 0 ? skillTier(rank) : "—"}</b>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[11px] text-muted">Seyis'te kitap ile gelişir. Öğrenileni alt çubuğa sürükle. Yalnız at üzerinde basılır.</p>
+          </div>
           <p className={chosenTree ? "text-[11px] text-muted" : "col-span-2 text-[11px] text-muted"}>İlk + bir ağacı kilitler. Öğrenileni alt çubuğa sürükle.</p>
         </div>
       ) : (
@@ -3587,7 +3852,10 @@ const TABS: Record<string, { id: string; label: string; test: (id: string, slot:
     { id: "iksir", label: "İksir", test: (id) => id.startsWith("pot-") },
     { id: "diger", label: "Diğer", test: (id) => !id.startsWith("pot-") },
   ],
-  stable: [{ id: "binek", label: "Binek", test: () => true }],
+  stable: [
+    { id: "binek", label: "Binek", test: () => true },
+    { id: "gelistir", label: "Binek Geliştir", test: () => false },
+  ],
   fisher: [{ id: "olta", label: "Olta", test: () => true }],
   miner: [{ id: "kazma", label: "Kazma", test: () => true }],
 };
@@ -3808,8 +4076,9 @@ function MapLoad() {
   }, [name]);
   if (!name) return null;
   return (
-    <div className="absolute inset-0 z-50 bg-black" data-ui>
+    <div className="pointer-events-auto absolute inset-0 z-[85] bg-black" data-ui>
       <img src="/boot.jpg" alt="" className="absolute inset-0 h-full w-full object-cover" />
+      <div className="absolute inset-0 bg-black/45" />
       <div className="absolute inset-x-0 bottom-[12%] flex flex-col items-center px-6">
         <p className="mb-1 text-sm text-[#e7fdff]">{name} yükleniyor</p>
         <p className="mb-1.5 text-[13px] font-semibold text-[#e7fdff]">{Math.min(100, pct)}%</p>
@@ -3945,7 +4214,7 @@ function CraftShop() {
           return (
             <div key={row.id} className="rounded-md border border-border bg-bg px-2 py-2 text-sm">
               <p className="break-words text-gold">{row.name}</p>
-              <p className="text-[11px] text-muted">{row.forClass === "hepsi" ? "Bütün Karakterler Kuşanabilir" : row.forClass === "savasci" ? "Savaşçı" : row.forClass === "okcu" ? "Okçu" : row.forClass === "buyucu" ? "Büyücü" : "Ninja"} · Sv.{row.req}</p>
+              <p className="text-[11px] text-muted">{"book" in row && row.book ? "At yetenek kitabı · Seyis'te + basılır · Sv.30" : row.forClass === "hepsi" ? "Bütün Karakterler Kuşanabilir" : row.forClass === "savasci" ? "Savaşçı" : row.forClass === "okcu" ? "Okçu" : row.forClass === "buyucu" ? "Büyücü" : "Ninja"}{!("book" in row && row.book) ? ` · Sv.${row.req}` : ""}</p>
               <p className="break-words text-xs">{ores} · <GoldInline n={row.gold} /></p>
               <button type="button" disabled={!ready} className="mt-1 rounded-md border border-gold px-3 py-1 text-xs text-gold disabled:opacity-40" onClick={() => useRpg.getState().craftItem(row.id)}>
                 Üret
@@ -3983,7 +4252,7 @@ function TradeShop({ kind }: { kind: Exclude<ShopKind, "smith" | "depot" | "guar
   return (
     <Shell title={SHOP_TITLE[kind] ?? "Dükkan"} className="w-[min(22rem,92vw)]" vendor>
       <p className="mb-2 text-sm text-gold"><GoldInline n={gold} /></p>
-      <p className="mb-2 text-xs text-muted">Eşyayı bu pencereye bırak. Altına çevrilir.</p>
+      <p className="mb-2 text-xs text-muted">{kind === "stable" && current?.id === "gelistir" ? "İlk slota at, ikinci slota yetenek kitabı. Yalnızca kitap ile + basılır." : "Eşyayı bu pencereye bırak. Altına çevrilir."}</p>
       <div className="mb-2 flex flex-wrap gap-1">
         {tabs.map((row) => (
           <button key={row.id} type="button" className={tab === row.id ? "rounded-md border border-gold px-2 py-1 text-xs text-gold" : "rounded-md border border-border px-2 py-1 text-xs text-muted"} onClick={() => { setTab(row.id); setPage(0); }}>
@@ -3992,6 +4261,8 @@ function TradeShop({ kind }: { kind: Exclude<ShopKind, "smith" | "depot" | "guar
         ))}
       </div>
       {classShop ? <ClassChips value={klass} onChange={(id) => { setKlass(id); setPage(0); }} /> : null}
+      {kind === "stable" && current?.id === "gelistir" ? <MountBench /> : (
+      <>
       <div className="flex flex-col gap-2 overflow-hidden">
         {view.map((row) => {
           const preview = { ...row, uid: row.id, level: 1, plus: 0 } as Item;
@@ -4032,8 +4303,82 @@ function TradeShop({ kind }: { kind: Exclude<ShopKind, "smith" | "depot" | "guar
         })}
       </div>
       <PageRow page={safe} pages={pages} onPage={setPage} />
+      </>
+      )}
       {tip ? <Tip item={tip.item} x={tip.x} y={tip.y} /> : null}
     </Shell>
+  );
+}
+
+function MountBench() {
+  const level = useRpg((s) => s.level);
+  const gold = useRpg((s) => s.gold);
+  const mount = useRpg((s) => s.benchMount);
+  const book = useRpg((s) => s.benchBook);
+  const skills = useRpg((s) => s.mountSkills);
+  const locked = level < 30;
+  const skill = MOUNT_SKILLS.find((row) => row.book === book?.id);
+  const rank = skill ? skills[skill.id] : 0;
+  const cost = skill && rank < SKILL_MAX ? 150 + rank * 60 : 0;
+  return (
+    <div>
+      {locked ? <p className="mb-2 text-sm text-muted">30. seviye gerekir. At Terbiyesi görevinden sonra kitap basılır.</p> : <p className="mb-2 text-xs text-muted">At kuşanılıyken sürükle. Biniliyken konmaz. Her + bir kitap ve altın yer. Son basamak S+.</p>}
+      <div className="grid grid-cols-2 gap-2">
+        <BenchSlot which="mount" title="Binek" item={mount} hint="Atı bırak" />
+        <BenchSlot which="book" title="Yetenek Kitabı" item={book} hint="Kitabı bırak" />
+      </div>
+      <div className="mt-3 flex flex-col gap-1 text-xs">
+        {MOUNT_SKILLS.map((row) => (
+          <p key={row.id}>
+            <span className="text-gold">{row.name}</span> {skillTier(skills[row.id] || 0)} · {row.line}
+          </p>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        {skill ? `${skill.name} şu an ${skillTier(rank)}` : "Kitap hangi yeteneğe basılacağını seçer."}
+        {cost ? <> · <GoldInline n={cost} /></> : rank >= SKILL_MAX && skill ? " · S+ son seviye" : ""}
+      </p>
+      <button type="button" disabled={locked || !mount || !book || !cost || gold < cost} className="mt-2 rounded-md border border-gold px-3 py-2 text-sm text-gold disabled:opacity-40" onClick={() => useRpg.getState().trainMount()}>
+        +
+      </button>
+    </div>
+  );
+}
+
+function BenchSlot({ which, title, item, hint }: { which: "mount" | "book"; title: string; item: Item | null; hint: string }) {
+  return (
+    <div
+      data-bench={which}
+      draggable={!!item}
+      className="min-h-16 rounded-md border border-dashed border-border bg-bg p-2 text-xs"
+      onDragStart={(e) => {
+        if (!item) {
+          e.preventDefault();
+          return;
+        }
+        setCarry({ kind: "bench", which });
+        e.dataTransfer.setData("text/plain", `bench:${which}`);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      onDragEnd={() => {
+        const token = readCarry();
+        if (token?.kind === "bench" && token.which === which) useRpg.getState().takeBench(which);
+        setCarry(null);
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        keepCarry = true;
+        useRpg.getState().setBench(which, e.dataTransfer.getData("text/plain"));
+      }}
+    >
+      <p className="text-muted">{title}</p>
+      <p>{item ? `${item.name}${item.count && item.count > 1 ? ` x${item.count}` : ""}` : hint}</p>
+    </div>
   );
 }
 

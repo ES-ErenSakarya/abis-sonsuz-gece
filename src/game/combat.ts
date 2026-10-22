@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { RANGED_HIT } from "@/game/actors";
 
 type Shot = {
   mesh: THREE.Object3D;
@@ -15,6 +16,9 @@ type Shot = {
   dmg: number;
   crit: boolean;
   home: string;
+  ox: number;
+  oz: number;
+  travel: number;
 };
 
 type Boom = { mesh: THREE.Group; life: number; light: THREE.MeshBasicMaterial; ring: THREE.MeshBasicMaterial };
@@ -70,12 +74,12 @@ export function createCombat(scene: THREE.Scene) {
   const arrows = Array.from({ length: 8 }, () => {
     const mesh = arrowMesh();
     root.add(mesh);
-    return { mesh, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 1.25, live: false, kind: "arrow" as const, dmg: 0, crit: false, home: "" };
+    return { mesh, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 1.25, live: false, kind: "arrow" as const, dmg: 0, crit: false, home: "", ox: 0, oz: 0, travel: 0 };
   });
   const bolts = Array.from({ length: 5 }, () => {
     const mesh = boltMesh();
     root.add(mesh);
-    return { mesh, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 0.9, live: false, kind: "bolt" as const, dmg: 0, crit: false, home: "" };
+    return { mesh, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 0.9, live: false, kind: "bolt" as const, dmg: 0, crit: false, home: "", ox: 0, oz: 0, travel: 0 };
   });
   const booms = Array.from({ length: 5 }, () => {
     const boom = boomMesh();
@@ -107,6 +111,9 @@ export function createCombat(scene: THREE.Scene) {
     shot.dmg = dmg;
     shot.crit = crit;
     shot.home = home;
+    shot.ox = origin.x;
+    shot.oz = origin.z;
+    shot.travel = 0;
     shot.mesh.visible = true;
     shot.mesh.position.set(shot.x, shot.y, shot.z);
   };
@@ -152,7 +159,7 @@ export function createCombat(scene: THREE.Scene) {
         shot.y = 6.5 + Math.random() * 4.5;
         shot.vy = 8 + Math.random() * 5;
         shot.mesh.visible = true;
-        shot.mesh.position.set(x + (Math.random() - 0.5) * 7.2, shot.y, z + (Math.random() - 0.5) * 7.2);
+        shot.mesh.position.set(x + (Math.random() - 0.5) * RANGED_HIT * 2, shot.y, z + (Math.random() - 0.5) * RANGED_HIT * 2);
         shot.mesh.quaternion.setFromUnitVectors(_up, down);
       }
     },
@@ -174,6 +181,8 @@ export function createCombat(scene: THREE.Scene) {
           }
         }
         shot.life += dt;
+        const flown = Math.hypot(shot.vx, shot.vy, shot.vz) * dt;
+        shot.travel += flown;
         shot.x += shot.vx * dt;
         shot.y += shot.vy * dt;
         shot.z += shot.vz * dt;
@@ -185,6 +194,7 @@ export function createCombat(scene: THREE.Scene) {
         for (const target of targets) {
           if (!shot.live || !target.alive) continue;
           if (shot.home && target.id !== shot.home) continue;
+          if (Math.hypot(target.x - shot.ox, target.z - shot.oz) > RANGED_HIT + 0.15) continue;
           const dx = shot.x - target.x;
           const dy = shot.y - target.y;
           const dz = shot.z - target.z;
@@ -195,10 +205,11 @@ export function createCombat(scene: THREE.Scene) {
           if (shot.kind === "bolt") explode(shot.x, shot.y, shot.z);
           return;
         }
-        if (shot.life < shot.max) return;
-        if (shot.kind === "bolt") explode(shot.x, shot.y, shot.z);
-        shot.live = false;
-        shot.mesh.visible = false;
+        if (shot.travel > RANGED_HIT + 0.35 || shot.life >= shot.max) {
+          if (shot.kind === "bolt") explode(shot.x, shot.y, shot.z);
+          shot.live = false;
+          shot.mesh.visible = false;
+        }
       };
       for (const shot of arrows) step(shot);
       for (const shot of bolts) step(shot);

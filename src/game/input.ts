@@ -235,6 +235,33 @@ export function setWindVolume(volume: number) {
   if (windGain) windGain.gain.value = Math.max(0, Math.min(1, volume)) * 0.04;
 }
 
+let enterGate: { name: string; where: { x?: number; z?: number } | null } | null = null;
+const enterWatch = new Set<() => void>();
+
+export function peekEnter() {
+  return enterGate?.name ?? "";
+}
+
+export function subscribeEnter(fn: () => void) {
+  enterWatch.add(fn);
+  return () => {
+    enterWatch.delete(fn);
+  };
+}
+
+export function armEnter(name: string, where?: { x?: number; z?: number } | null) {
+  enterGate = { name: name || "Karakter", where: where ?? null };
+  enterWatch.forEach((fn) => fn());
+}
+
+export function releaseEnter() {
+  const gate = enterGate;
+  if (!gate) return;
+  enterGate = null;
+  enterWatch.forEach((fn) => fn());
+  beginPlay(gate.where);
+}
+
 export function beginPlay(where?: { x?: number; z?: number } | null) {
   const state = bag();
   const has =

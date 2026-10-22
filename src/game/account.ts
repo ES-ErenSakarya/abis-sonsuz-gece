@@ -17,6 +17,16 @@ function asJson<T>(value: unknown, fallback: T): T {
   return (value ?? fallback) as T;
 }
 
+function mountSkillsOf(raw: unknown): { surat: number; soluk: number; cifte: number } {
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const n = (key: string) => {
+    const value = obj[key];
+    const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
+    return Math.max(0, Math.min(32, Math.floor(Number.isFinite(parsed) ? parsed : 0)));
+  };
+  return { surat: n("surat"), soluk: n("soluk"), cifte: n("cifte") };
+}
+
 function splitInvested(raw: unknown): {
   invested: Record<StatKey, number>;
   skills: Record<string, number>;
@@ -48,6 +58,7 @@ function splitInvested(raw: unknown): {
   duelWins: number;
   goldEarned: number;
   skillBank: number;
+  mountSkills: { surat: number; soluk: number; cifte: number };
   filledGear: string[];
   weekClaim: string;
   friends: { id: string; nick: string; level: number }[];
@@ -107,6 +118,7 @@ function splitInvested(raw: unknown): {
     duelWins: num("duelWins"),
     goldEarned: num("goldEarned"),
     skillBank: num("skillBank"),
+    mountSkills: mountSkillsOf(obj.mountSkills),
     filledGear: Array.isArray(obj.filledGear) ? obj.filledGear.filter((id) => typeof id === "string") : [],
     weekClaim: typeof obj.weekClaim === "string" ? obj.weekClaim : "",
     friends: Array.isArray(obj.friends)
@@ -177,6 +189,7 @@ function rowOf(raw: {
     duelWins: stats.duelWins,
     goldEarned: stats.goldEarned,
     skillBank: stats.skillBank,
+    mountSkills: stats.mountSkills,
     filledGear: stats.filledGear,
     weekClaim: stats.weekClaim,
     friends: stats.friends,
@@ -380,6 +393,11 @@ export const saveCharacter = createServerFn({ method: "POST" })
           duelWins: Math.max(0, Math.floor(Number(save.duelWins) || 0)),
           goldEarned: Math.max(0, Math.floor(Number(save.goldEarned) || 0)),
           skillBank: Math.max(0, Math.floor(Number(save.skillBank) || 0)),
+          mountSkills: {
+            surat: Math.max(0, Math.min(32, Math.floor(Number(save.mountSkills?.surat) || 0))),
+            soluk: Math.max(0, Math.min(32, Math.floor(Number(save.mountSkills?.soluk) || 0))),
+            cifte: Math.max(0, Math.min(32, Math.floor(Number(save.mountSkills?.cifte) || 0))),
+          },
           filledGear: Array.isArray(save.filledGear) ? save.filledGear : [],
           weekClaim: typeof save.weekClaim === "string" ? save.weekClaim : "",
           friends: Array.isArray(save.friends) ? save.friends : [],

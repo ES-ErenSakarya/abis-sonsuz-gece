@@ -12,7 +12,7 @@ import {
   setDeletePassword,
   type CharacterRow,
 } from "@/game/account";
-import { beginPlay } from "@/game/input";
+import { armEnter, peekEnter } from "@/game/input";
 import { useHud } from "@/game/hudStore";
 import { applySave, captureSave, CLASS_LIST, className, type ClassId } from "@/game/rpg";
 import { useSession } from "@/game/session";
@@ -282,10 +282,10 @@ export function CharacterScreens() {
     };
   }, [playing]);
   const play = (row: CharacterRow) => {
-    if (!useHud.getState().ready) return;
+    if (!useHud.getState().ready || peekEnter()) return;
     applySave(row);
     useSession.getState().enter(row.id);
-    beginPlay({ x: row.x, z: row.z });
+    armEnter(row.name, { x: row.x, z: row.z });
   };
 
   const make = async () => {
