@@ -1820,9 +1820,13 @@ function World() {
         if (!dead) useHud.getState().setReady(true);
       }
     })();
+    const readyKick = window.setTimeout(() => {
+      if (!dead) useHud.getState().setReady(true);
+    }, 4500);
 
     return () => {
       dead = true;
+      window.clearTimeout(readyKick);
       weatherRef.current?.dispose();
       weatherRef.current = null;
       combatRef.current?.dispose();

@@ -35,27 +35,27 @@ function buildWarriorBones() {
     bones.push(part);
     return part;
   };
-  const hips = add("Hips", fit, 0, 0, 0.06);
-  const spine = add("Spine", hips, 0, 0.16, -0.01);
-  const spine1 = add("Spine1", spine, 0, 0.16, -0.01);
-  const chest = add("Spine2", spine1, 0, 0.16, -0.01);
+  const hips = add("Hips", fit, 0, 0, 0.05);
+  const spine = add("Spine", hips, 0, 0.18, 0);
+  const spine1 = add("Spine1", spine, 0, 0.16, 0);
+  const chest = add("Spine2", spine1, 0, 0.14, 0);
   const neck = add("Neck", chest, 0, 0.18, 0);
   add("Head", neck, 0, 0.16, 0.02);
   const leg = (side: number, upName: string, lowName: string, footName: string) => {
-    const up = add(upName, hips, side * 0.18, -0.02, 0);
+    const up = add(upName, hips, side * 0.2, -0.02, 0.01);
     up.rotation.z = Math.PI;
-    const low = add(lowName, up, 0, 0.5, 0);
+    const low = add(lowName, up, 0, 0.52, 0);
     low.rotation.y = Math.PI;
-    add(footName, low, 0, 0.48, 0);
+    add(footName, low, 0, 0.44, 0);
   };
   leg(1, "LeftUpLeg", "LeftLeg", "LeftFoot");
   leg(-1, "RightUpLeg", "RightLeg", "RightFoot");
   const face = new THREE.Vector3(0, 0, 1);
   const arm = (side: number, armName: string, foreName: string, handName: string) => {
-    const shoulder = new THREE.Vector3(side * 0.22, 0.5, 0.02);
-    const elbow = new THREE.Vector3(side * 0.34, 0.2, 0.03);
-    const wrist = new THREE.Vector3(side * 0.42, -0.05, 0.05);
-    const up = add(armName, chest, shoulder.x, shoulder.y - 0.48, shoulder.z - 0.03);
+    const shoulder = new THREE.Vector3(side * 0.24, 0.5, 0.02);
+    const elbow = new THREE.Vector3(side * 0.33, 0.26, 0.025);
+    const wrist = new THREE.Vector3(side * 0.39, -0.04, 0.05);
+    const up = add(armName, chest, shoulder.x, shoulder.y - 0.48, shoulder.z - 0.05);
     const dir = elbow.clone().sub(shoulder);
     const len1 = dir.length() || 0.28;
     up.quaternion.copy(quatAlongY(dir, face));
@@ -95,74 +95,95 @@ function loadWarriorBody() {
           });
           const probe = buildWarriorBones();
           probe.root.updateMatrixWorld(true);
-          const segs = probe.bones.map((bone, index) => {
-            const start = probe.fit.worldToLocal(bone.getWorldPosition(new THREE.Vector3()));
-            const child = bone.children.find((item) => (item as THREE.Bone).isBone) as THREE.Bone | undefined;
-            const end = new THREE.Vector3();
-            if (child) probe.fit.worldToLocal(child.getWorldPosition(end));
-            else probe.fit.worldToLocal(bone.localToWorld(end.set(0, 0.14, 0)));
-            if (start.distanceToSquared(end) < 1e-6) end.copy(start).add(new THREE.Vector3(0, 0.08, 0));
-            return { index, start, end };
+          const idOf: Record<string, number> = {};
+          probe.bones.forEach((bone, index) => {
+            idOf[bone.name] = index;
           });
           const mapped = (sample as THREE.MeshStandardMaterial | null)?.map ?? null;
           if (mapped) mapped.colorSpace = THREE.SRGBColorSpace;
           const material = new THREE.MeshStandardMaterial({
             map: mapped,
             color: mapped ? "#ffffff" : "#b7a48a",
-            roughness: 0.62,
-            metalness: 0.12,
+            roughness: 0.58,
+            metalness: 0.18,
             emissive: "#ffffff",
             emissiveMap: mapped,
-            emissiveIntensity: 0.42,
+            emissiveIntensity: 0.22,
             side: THREE.DoubleSide,
           });
-          const point = new THREE.Vector3();
-          for (const geo of sources) {
+          const paint = (geo: THREE.BufferGeometry) => {
             const pos = geo.getAttribute("position");
             const indexAttr = new Uint16Array(pos.count * 4);
             const weightAttr = new Float32Array(pos.count * 4);
-            for (let v = 0; v < pos.count; v++) {
-              point.fromBufferAttribute(pos, v);
-              let best = 0;
-              let bestD = Infinity;
-              let second = 0;
-              let secondD = Infinity;
-              for (let s = 0; s < segs.length; s++) {
-                const seg = segs[s]!;
-                const abx = seg.end.x - seg.start.x;
-                const aby = seg.end.y - seg.start.y;
-                const abz = seg.end.z - seg.start.z;
-                const ab2 = abx * abx + aby * aby + abz * abz || 1e-6;
-                let t = ((point.x - seg.start.x) * abx + (point.y - seg.start.y) * aby + (point.z - seg.start.z) * abz) / ab2;
-                t = Math.max(0, Math.min(1, t));
-                const dx = point.x - (seg.start.x + abx * t);
-                const dy = point.y - (seg.start.y + aby * t);
-                const dz = point.z - (seg.start.z + abz * t);
-                const d = dx * dx + dy * dy + dz * dz;
-                if (d < bestD) {
-                  second = best;
-                  secondD = bestD;
-                  bestD = d;
-                  best = s;
-                } else if (d < secondD) {
-                  secondD = d;
-                  second = s;
-                }
-              }
-              const w1 = 1 / (Math.sqrt(bestD) + 0.02);
-              const w2 = 1 / (Math.sqrt(secondD) + 0.02);
-              const sum = w1 + w2;
+            const put = (v: number, a: number, aw: number, b = -1, bw = 0) => {
               const o = v * 4;
-              indexAttr[o] = segs[best]!.index;
-              indexAttr[o + 1] = segs[second]!.index;
-              weightAttr[o] = w1 / sum;
-              weightAttr[o + 1] = w2 / sum;
+              const sum = aw + Math.max(0, bw);
+              indexAttr[o] = a;
+              weightAttr[o] = aw / sum;
+              if (b >= 0 && bw > 0.04) {
+                indexAttr[o + 1] = b;
+                weightAttr[o + 1] = bw / sum;
+              }
+            };
+            for (let v = 0; v < pos.count; v++) {
+              const x = pos.getX(v);
+              const y = pos.getY(v);
+              const z = pos.getZ(v);
+              const ax = Math.abs(x);
+              const side = x < 0 ? "Right" : "Left";
+              const up = idOf[`${side}UpLeg`]!;
+              const low = idOf[`${side}Leg`]!;
+              const foot = idOf[`${side}Foot`]!;
+              const arm = idOf[`${side}Arm`]!;
+              const fore = idOf[`${side}ForeArm`]!;
+              const hand = idOf[`${side}Hand`]!;
+              const hips = idOf.Hips!;
+              const spine = idOf.Spine!;
+              const spine1 = idOf.Spine1!;
+              const chest = idOf.Spine2!;
+              const neck = idOf.Neck!;
+              const head = idOf.Head!;
+              if (y > 0.74 && ax < 0.18) {
+                put(v, head, 1);
+              } else if (y > 0.62 && ax < 0.14) {
+                const k = (y - 0.62) / 0.14;
+                put(v, neck, 1 - k, head, k);
+              } else if (y > -0.18 && y < 0.58 && ax > (y > 0.38 ? 0.3 : 0.27)) {
+                const shoulderY = 0.5;
+                const elbowY = 0.26;
+                const wristY = -0.04;
+                if (y > elbowY + 0.06) {
+                  const k = THREE.MathUtils.clamp((shoulderY - y) / (shoulderY - elbowY), 0, 1);
+                  put(v, arm, 1 - k * 0.45, k > 0.55 ? fore : chest, k > 0.55 ? (k - 0.55) : 0.2);
+                } else if (y > wristY + 0.08) {
+                  const k = THREE.MathUtils.clamp((elbowY - y) / (elbowY - wristY), 0, 1);
+                  put(v, k < 0.72 ? fore : hand, 1, k < 0.72 ? arm : fore, k < 0.25 || k > 0.72 ? 0.35 : 0);
+                } else {
+                  put(v, hand, 0.82, fore, 0.18);
+                }
+              } else if (y < -0.3 && ax > 0.06) {
+                if (y > -0.48) put(v, up, 0.75, hips, 0.25);
+                else if (y > -0.62) put(v, low, 0.55, up, 0.45);
+                else if (y > -0.86) put(v, low, 0.85, foot, 0.15);
+                else put(v, foot, 0.8, low, 0.2);
+              } else if (y < 0.1 && y > -0.42) {
+                put(v, hips, 0.78, spine, 0.22);
+              } else if (y > 0.5) {
+                put(v, chest, 0.7, neck, 0.3);
+              } else if (y > 0.32) {
+                put(v, spine1, 0.6, chest, 0.4);
+              } else if (y > 0.14) {
+                put(v, spine, 0.55, spine1, 0.45);
+              } else {
+                put(v, hips, 0.6, spine, 0.4);
+              }
+              void z;
             }
             geo.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(indexAttr, 4));
             geo.setAttribute("skinWeight", new THREE.Float32BufferAttribute(weightAttr, 4));
-            geo.computeVertexNormals();
             geo.computeBoundingSphere();
-          }
+          };
+          for (const geo of sources) paint(geo);
           resolve({ geos: sources, material });
         } catch (err) {
           reject(err);
@@ -185,7 +206,6 @@ export function createWarriorRig() {
   void loadWarriorBody()
     .then((pack) => {
       if (!alive) return;
-      const posed = bones.map((bone) => ({ q: bone.quaternion.clone(), p: bone.position.clone(), s: bone.scale.clone() }));
       bones.forEach((bone, i) => {
         bone.quaternion.copy(bind[i]!.q);
         bone.position.copy(bind[i]!.p);
@@ -203,9 +223,9 @@ export function createWarriorRig() {
         mesh.bind(skeleton);
       }
       bones.forEach((bone, i) => {
-        bone.quaternion.copy(posed[i]!.q);
-        bone.position.copy(posed[i]!.p);
-        bone.scale.copy(posed[i]!.s);
+        bone.quaternion.copy(bind[i]!.q);
+        bone.position.copy(bind[i]!.p);
+        bone.scale.set(1, 1, 1);
       });
       root.updateMatrixWorld(true);
       const ready = root.userData.onWarriorReady;

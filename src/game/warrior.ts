@@ -316,6 +316,148 @@ export function punchArc(fx: SwingFx, origin: THREE.Vector3, dt: number) {
   }
 }
 
+function poseGladiator(
+  model: THREE.Object3D,
+  rest: RestPose,
+  opts: {
+    moving: boolean;
+    run: number;
+    cycle: number;
+    time: number;
+    swing: number;
+    side: number;
+    armed?: boolean;
+    style?: WeaponStyle;
+    combo?: number;
+    mounted?: boolean;
+  },
+) {
+  const { moving, run, cycle, time, swing, side, mounted = false } = opts;
+  const style: WeaponStyle = opts.style ?? (opts.armed ? "sword" : "fist");
+  const combo = Math.max(1, Math.min(3, opts.combo || 1));
+  resetPose(model, rest);
+  const stride = Math.sin(cycle);
+  const step = Math.sin(cycle * 2);
+  const gait = moving ? 1 : 0;
+  const sprint = moving && run > 0.45 ? 1 : 0;
+  const thigh = gait * (0.42 + run * 0.28);
+  if (mounted) {
+    twist(model, rest, "LeftUpLeg", 1.15, 0.08, 0.32);
+    twist(model, rest, "RightUpLeg", 1.15, -0.08, -0.32);
+    twist(model, rest, "LeftLeg", 1.45, 0, 0);
+    twist(model, rest, "RightLeg", 1.45, 0, 0);
+    twist(model, rest, "LeftFoot", -0.9, 0, 0);
+    twist(model, rest, "RightFoot", -0.9, 0, 0);
+  } else {
+    twist(model, rest, "LeftUpLeg", -stride * thigh, 0, 0);
+    twist(model, rest, "RightUpLeg", stride * thigh, 0, 0);
+    const kneeL = gait ? 0.06 + Math.max(0, -stride) * (0.7 + run * 0.25) : 0.02;
+    const kneeR = gait ? 0.06 + Math.max(0, stride) * (0.7 + run * 0.25) : 0.02;
+    twist(model, rest, "LeftLeg", kneeL, 0, 0);
+    twist(model, rest, "RightLeg", kneeR, 0, 0);
+    twist(model, rest, "LeftFoot", gait ? -0.12 - kneeL * 0.25 : 0, 0, 0);
+    twist(model, rest, "RightFoot", gait ? -0.12 - kneeR * 0.25 : 0, 0, 0);
+  }
+  const breathe = Math.sin(time * 1.4) * (moving ? 0.012 : 0.02);
+  const melee = swing > 0 && style !== "bow" && style !== "olta";
+  twist(model, rest, "Hips", sprint * 0.12, gait * step * 0.06, 0);
+  twist(model, rest, "Spine", sprint * 0.18 + breathe, gait * -step * 0.07, 0);
+  twist(model, rest, "Spine1", sprint * 0.06, gait * -step * 0.04, 0);
+  twist(model, rest, "Head", moving ? -sprint * 0.05 : Math.sin(time * 0.55) * 0.03, Math.sin(time * 0.3) * 0.035, 0);
+  if (melee) {
+    const wind = swing < 0.22 ? swing / 0.22 : Math.max(0, 1 - (swing - 0.22) / 0.14);
+    const cutRaw = swing < 0.24 ? 0 : Math.min(1, (swing - 0.24) / 0.36);
+    const cut = cutRaw * cutRaw * (3 - 2 * cutRaw);
+    twist(model, rest, "Hips", sprint * 0.06, -0.1 * wind + 0.14 * cut, 0);
+    twist(model, rest, "Spine", breathe + 0.04, -0.28 * wind + 0.34 * cut, 0);
+    twist(model, rest, "Spine1", 0.02, -0.14 * wind + 0.18 * cut, 0);
+    twist(model, rest, "Head", -0.04, -0.12 * wind + 0.16 * cut, 0);
+  }
+  const hips = bone(model, "Hips");
+  const hipRest = rest.pos.Hips;
+  if (hips && hipRest && moving && !mounted) hips.position.y = hipRest.y + Math.abs(step) * (0.02 + run * 0.02);
+  model.updateMatrixWorld(true);
+  const fwd = model.getWorldDirection(_fwd);
+  const left = _left.set(1, 0, 0).applyQuaternion(model.getWorldQuaternion(_q));
+  const place = (out: THREE.Vector3, armName: string, f: number, u: number, s: number) => {
+    const shoulder = bone(model, armName);
+    if (!shoulder) return;
+    shoulder.getWorldPosition(_c);
+    out.copy(_c).addScaledVector(fwd, f).addScaledVector(_up, u).addScaledVector(left, s);
+  };
+  const armed = style === "sword" || style === "pala" || style === "dagger" || style === "staff";
+  const drop = mounted ? -0.28 : sprint ? -0.2 : -0.44;
+  const reach = gait * (0.18 + run * 0.16);
+  if (style === "bow") {
+    const pull = swing > 0 ? punchExtend(swing) : 0;
+    place(_lt, "LeftArm", 0.22 + pull * 0.12, -0.08 + pull * 0.22, 0.1 - pull * 0.16);
+    place(_rt, "RightArm", 0.06 + pull * 0.16, -0.06 + pull * 0.2, -0.16 + pull * 0.08);
+  } else if (melee && style !== "fist" && style !== "kazma") {
+    const wide = combo === 2 ? -1 : 1;
+    const overhead = combo >= 3;
+    const guard = overhead ? { f: 0.1, u: drop, s: -0.08 } : { f: 0.1, u: drop, s: -0.12 };
+    const windup = overhead ? { f: -0.06, u: 0.48, s: -0.04 } : { f: -0.12, u: 0.3, s: wide * -0.2 };
+    const hit = overhead ? { f: 0.46, u: -0.24, s: 0 } : { f: 0.48, u: -0.08, s: wide * 0.24 };
+    const span = (from: { f: number; u: number; s: number }, to: { f: number; u: number; s: number }, t: number) => ({
+      f: from.f + (to.f - from.f) * t,
+      u: from.u + (to.u - from.u) * t,
+      s: from.s + (to.s - from.s) * t,
+    });
+    const smooth = (t: number) => t * t * (3 - 2 * t);
+    const pose = swing < 0.22 ? span(guard, windup, smooth(swing / 0.22))
+      : swing < 0.56 ? span(windup, hit, smooth((swing - 0.22) / 0.34))
+      : span(hit, guard, smooth(Math.min(1, (swing - 0.56) / 0.4)));
+    place(_rt, "RightArm", pose.f, pose.u, pose.s);
+    place(_lt, "LeftArm", 0.08, -0.3, 0.16);
+  } else if (style === "fist" && swing > 0) {
+    const ext = punchExtend(swing);
+    const punchRight = side > 0;
+    place(punchRight ? _rt : _lt, punchRight ? "RightArm" : "LeftArm", 0.12 + ext * 0.42, -0.08 + ext * 0.1, (punchRight ? -1 : 1) * 0.06);
+    place(punchRight ? _lt : _rt, punchRight ? "LeftArm" : "RightArm", 0.04, -0.2, (punchRight ? 1 : -1) * 0.14);
+  } else if (style === "kazma") {
+    const chop = swing > 0 ? punchExtend(swing) : 0;
+    place(_lt, "LeftArm", 0.08, drop + 0.08, 0.14);
+    place(_rt, "RightArm", 0.08 + chop * 0.34, 0.22 - chop * 0.48, -0.1);
+  } else {
+    place(_lt, "LeftArm", stride * reach, drop + run * 0.08, 0.11);
+    place(_rt, "RightArm", -stride * reach * (armed ? 0.62 : 1), drop + (armed ? 0.06 : 0) + run * 0.06, armed ? -0.1 : -0.12);
+  }
+  _poleL.copy(fwd).multiplyScalar(-0.85).addScaledVector(left, 0.5).addScaledVector(_down, 0.2);
+  _poleR.copy(fwd).multiplyScalar(-0.85).addScaledVector(left, -0.5).addScaledVector(_down, 0.2);
+  if (bone(model, "LeftArm") && bone(model, "LeftHand")) solveArm(model, "LeftArm", "LeftForeArm", rest.l1, rest.l2, _lt, _poleL, 0);
+  if (bone(model, "RightArm") && bone(model, "RightHand")) solveArm(model, "RightArm", "RightForeArm", rest.r1, rest.r2, _rt, _poleR, 0);
+  if (style === "bow") {
+    const pull = swing > 0 ? punchExtend(swing) : 0;
+    pointHand(model, "LeftHand", _jab.copy(fwd).addScaledVector(_up, 0.15 + pull * 0.4), _down);
+    pointHand(model, "RightHand", pull > 0.05 ? _in.copy(fwd).addScaledVector(_up, 0.45) : _down, left);
+  } else if (melee && style !== "fist" && style !== "kazma") {
+    const wide = combo === 2 ? -1 : 1;
+    if (combo >= 3) _jab.copy(_up).multiplyScalar(1 - Math.min(1, swing)).addScaledVector(fwd, Math.min(1, swing)).addScaledVector(_down, Math.min(1, swing) * 0.7);
+    else _jab.copy(left).multiplyScalar(wide * (-0.85 + Math.min(1, swing) * 1.5)).addScaledVector(fwd, 0.25 + Math.min(1, swing) * 0.7).addScaledVector(_up, 0.55 * (1 - Math.min(1, swing)));
+    pointHand(model, "RightHand", _jab, _down);
+    pointHand(model, "LeftHand", _in.copy(fwd).addScaledVector(_down, 0.2), _down);
+  } else if (armed) {
+    pointHand(model, "RightHand", _jab.copy(_down).addScaledVector(fwd, 0.28), _elbow.copy(left).negate());
+    pointHand(model, "LeftHand", _in.copy(_down).addScaledVector(fwd, 0.12), _down);
+  } else {
+    pointHand(model, "RightHand", _down, fwd);
+    pointHand(model, "LeftHand", _down, fwd);
+  }
+  model.updateMatrixWorld(true);
+  if (mounted) {
+    model.position.y = rest.groundY + 0.06;
+    return;
+  }
+  const leftFoot = bone(model, "LeftFoot");
+  const rightFoot = bone(model, "RightFoot");
+  if (!leftFoot || !rightFoot) return;
+  const fy = Math.min(leftFoot.getWorldPosition(_p).y, rightFoot.getWorldPosition(_a).y);
+  const parentY = model.parent ? model.parent.getWorldPosition(_b).y : 0;
+  const nextY = rest.groundY - (fy - (parentY + rest.footClear));
+  const bob = moving && !mounted ? Math.abs(step) * (0.012 + run * 0.01) : 0;
+  model.position.y = THREE.MathUtils.clamp(nextY + bob, rest.groundY - 0.05, rest.groundY + 0.07);
+}
+
 export function poseFighter(
   model: THREE.Object3D,
   rest: RestPose,
@@ -336,6 +478,10 @@ export function poseFighter(
   const style: WeaponStyle = opts.style ?? (armed ? "sword" : "fist");
   const combo = Math.max(1, Math.min(3, opts.combo || 1));
   const mounted = Boolean(opts.mounted);
+  if (model.userData.glbBody) {
+    poseGladiator(model, rest, opts);
+    return;
+  }
   resetPose(model, rest);
 
   const stride = Math.sin(cycle);

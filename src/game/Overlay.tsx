@@ -245,33 +245,30 @@ function BootScreen({
   const pctRef = useRef(0);
   const holdRef = useRef(0);
   const startedRef = useRef(0);
-  const [pct, setPct] = useState(0);
+  const [pct, setPct] = useState(12);
   const [gone, setGone] = useState(bootPlayed);
   useEffect(() => {
     if (bootPlayed || gone) return;
     if (!startedRef.current) startedRef.current = performance.now();
-    let raf = 0;
     const tick = () => {
       const elapsed = performance.now() - startedRef.current;
       const loaded = !sessionWaiting && sceneReady && worldReady;
-      const hung = elapsed > 12000;
-      const goal = loaded || hung ? 100 : sessionWaiting ? 28 : !sceneReady ? 52 : !worldReady ? 74 : 90;
-      const gap = goal - pctRef.current;
-      if (gap > 0.05) pctRef.current = Math.min(goal, pctRef.current + Math.min(1.15, Math.max(0.45, gap * 0.08)));
-      if ((loaded || hung) && pctRef.current >= 99.4) pctRef.current = 100;
+      const timed = Math.min(100, 12 + elapsed / 40);
+      const flagged = loaded ? 100 : sessionWaiting ? 36 : !sceneReady ? 62 : !worldReady ? 82 : 96;
+      const goal = loaded || elapsed > 8000 ? 100 : Math.max(timed, flagged);
+      pctRef.current = Math.max(pctRef.current, goal);
       setPct(pctRef.current);
-      if (pctRef.current >= 100 && elapsed > 1600) {
+      if (pctRef.current >= 100 && elapsed > 900) {
         if (!holdRef.current) holdRef.current = performance.now();
-        if (performance.now() - holdRef.current > 420) {
+        if (performance.now() - holdRef.current > 280) {
           bootPlayed = true;
           setGone(true);
-          return;
         }
       } else holdRef.current = 0;
-      raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    tick();
+    const id = window.setInterval(tick, 60);
+    return () => window.clearInterval(id);
   }, [gone, sceneReady, sessionWaiting, worldReady]);
   if (gone) return null;
   const shown = Math.min(100, Math.floor(pct));
@@ -297,34 +294,28 @@ function EnterLoad() {
   const name = useSyncExternalStore(subscribeEnter, peekEnter, () => "");
   const pctRef = useRef(0);
   const holdRef = useRef(0);
-  const [pct, setPct] = useState(0);
+  const [pct, setPct] = useState(10);
   useEffect(() => {
     if (!name) {
       pctRef.current = 0;
       holdRef.current = 0;
-      setPct(0);
+      setPct(10);
       return;
     }
     const started = performance.now();
-    let raf = 0;
     const tick = () => {
       const elapsed = performance.now() - started;
-      const goal = elapsed > 700 ? 100 : 62;
-      const gap = goal - pctRef.current;
-      if (gap > 0.05) pctRef.current = Math.min(goal, pctRef.current + Math.min(1.15, Math.max(0.5, gap * 0.08)));
-      if (elapsed > 1500 && pctRef.current >= 99.4) pctRef.current = 100;
+      const goal = elapsed > 700 ? 100 : Math.max(18, elapsed / 12);
+      pctRef.current = Math.max(pctRef.current, goal);
       setPct(pctRef.current);
-      if (pctRef.current >= 100 && elapsed > 1700) {
+      if (pctRef.current >= 100 && elapsed > 900) {
         if (!holdRef.current) holdRef.current = performance.now();
-        if (performance.now() - holdRef.current > 420) {
-          releaseEnter();
-          return;
-        }
+        if (performance.now() - holdRef.current > 220) releaseEnter();
       }
-      raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    tick();
+    const id = window.setInterval(tick, 50);
+    return () => window.clearInterval(id);
   }, [name]);
   if (!name) return null;
   const shown = Math.min(100, Math.floor(pct));
