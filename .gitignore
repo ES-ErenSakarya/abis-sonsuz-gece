@@ -12,6 +12,10 @@ unreal/
 launcher/
 *.zip
 *.glb
+!public/models/leaf-sword.glb
 *.exe
+!/Abis.exe
 *.pdb
 *.mp4
+__pycache__/
+*.pyc
