@@ -104,11 +104,10 @@ function loadWarriorBody() {
           const material = new THREE.MeshStandardMaterial({
             map: mapped,
             color: mapped ? "#ffffff" : "#b7a48a",
-            roughness: 0.58,
-            metalness: 0.18,
-            emissive: "#ffffff",
-            emissiveMap: mapped,
-            emissiveIntensity: 0.22,
+            roughness: 0.62,
+            metalness: 0.16,
+            emissive: "#1a1612",
+            emissiveIntensity: mapped ? 0.08 : 0,
             side: THREE.DoubleSide,
           });
           const paint = (geo: THREE.BufferGeometry) => {
@@ -231,6 +230,8 @@ export function createWarriorRig() {
       const ready = root.userData.onWarriorReady;
       if (typeof ready === "function") ready();
     })
-    .catch(() => {});
+    .catch((err) => {
+      console.error("Savaşçı modeli yüklenemedi:", err);
+    });
   return root;
 }

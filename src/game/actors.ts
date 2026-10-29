@@ -1346,11 +1346,12 @@ function paintPlus(root, plus) {
 	if (!root || glow <= 0) return;
 	root.traverse((obj) => {
 		if (!obj.isMesh || !obj.material) return;
+		if (obj.name === "leaf-baked" || obj.name === "leaf-flame" || obj.userData.leafSolid) return;
 		const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
 		for (const mat of mats) {
 			if (!mat || !mat.emissive) continue;
-			mat.emissive.set(glow > 0.85 ? "#fff1c2" : glow > 0.55 ? "#7ec8ff" : "#3a6ea5");
-			mat.emissiveIntensity = 0.18 + glow * 0.9;
+			mat.emissive.set(glow > 0.85 ? "#ffb15a" : glow > 0.55 ? "#7ec8ff" : "#3a6ea5");
+			mat.emissiveIntensity = 0.08 + glow * 0.28;
 		}
 	});
 }
@@ -1593,11 +1594,11 @@ function bakeFittedMesh(root) {
 	if (indices.length) geo.setIndex(indices);
 	geo.computeBoundingSphere();
 	const mat = new THREE.MeshStandardMaterial({
-		color: "#efe4bc",
+		color: "#cbb98a",
 		roughness: 0.4,
-		metalness: 0.18,
-		emissive: "#9aaf72",
-		emissiveIntensity: 0.55,
+		metalness: 0.42,
+		emissive: "#2a2418",
+		emissiveIntensity: 0.05,
 		side: THREE.DoubleSide
 	});
 	const mesh = new THREE.Mesh(geo, mat);
@@ -1609,16 +1610,53 @@ function bakeFittedMesh(root) {
 }
 
 function tintLeaf(root, plus) {
-	const glow = Math.min(1, Math.max(0, Number(plus) || 0) / 10);
+	const level = Math.max(0, Math.min(10, Math.floor(Number(plus) || 0)));
 	root.traverse((obj) => {
-		if (!obj.isMesh || !obj.material || obj.material.emissive == null) return;
+		if (!obj.isMesh || obj.name === "leaf-flame" || !obj.material || obj.material.emissive == null) return;
 		const mat = obj.material.clone();
-		mat.emissive.set(glow > 0.85 ? "#fff1c2" : glow > 0.45 ? "#b7dcff" : "#e7eed8");
-		mat.emissiveIntensity = 0.32 + glow * 0.85;
+		mat.color.set("#cbb98a");
+		mat.emissive.set(level >= 7 ? "#5a3012" : "#2c261c");
+		mat.emissiveIntensity = level > 0 ? 0.06 + level * 0.012 : 0.04;
+		mat.transparent = false;
+		mat.opacity = 1;
+		mat.depthWrite = true;
+		mat.roughness = 0.38;
+		mat.metalness = 0.45;
 		obj.material = mat;
+		obj.userData.leafSolid = true;
+		obj.renderOrder = 1;
 		obj.frustumCulled = false;
 		obj.castShadow = true;
 	});
+}
+
+function addLeafFlame(root, plus) {
+	const level = Math.max(0, Math.min(10, Math.floor(Number(plus) || 0)));
+	if (level <= 0) return;
+	const blade = root.isMesh ? root : root.getObjectByName("leaf-baked");
+	if (!blade || !blade.isMesh || !blade.geometry) return;
+	const hot = level >= 7;
+	const mid = level >= 4;
+	const mat = new THREE.MeshBasicMaterial({
+		color: hot ? "#ff8a2a" : mid ? "#9fd4ff" : "#d7f0a4",
+		transparent: true,
+		opacity: 0.14 + level * 0.016,
+		depthWrite: false,
+		blending: THREE.AdditiveBlending,
+		side: THREE.DoubleSide,
+		toneMapped: false
+	});
+	const shell = new THREE.Mesh(blade.geometry, mat);
+	shell.name = "leaf-flame";
+	shell.scale.setScalar(1.028 + level * 0.005);
+	shell.frustumCulled = false;
+	shell.renderOrder = 3;
+	shell.castShadow = false;
+	shell.onBeforeRender = () => {
+		const t = performance.now() * 0.005;
+		mat.opacity = Math.min(0.42, 0.1 + level * 0.014 + Math.sin(t) * 0.06 + Math.sin(t * 2.6) * 0.03);
+	};
+	blade.add(shell);
 }
 
 function mountLeaf(g, template, plus) {
@@ -1632,6 +1670,7 @@ function mountLeaf(g, template, plus) {
 		obj.frustumCulled = false;
 	});
 	tintLeaf(clone, plus);
+	addLeafFlame(clone, plus);
 	g.add(clone);
 }
 
@@ -1938,7 +1977,7 @@ export function syncGear(model, equipped) {
 	const weaponId = itemId(equipped.weapon);
 	const weaponName = equipped.weapon && typeof equipped.weapon === "object" && typeof equipped.weapon.name === "string" ? equipped.weapon.name : "";
 	const style = weaponStyleOf(weaponId);
-	const wsig = `${weaponId}:${equipped.weapon?.plus || 0}${hunterBlade(weaponId, weaponName) ? ":leaf3" : ""}`;
+	const wsig = `${weaponId}:${equipped.weapon?.plus || 0}${hunterBlade(weaponId, weaponName) ? ":leaf4" : ""}`;
 	const dropPiece = (slot) => {
 		const piece = store[slot];
 		if (!piece) return;
@@ -2104,7 +2143,7 @@ export function syncGear(model, equipped) {
 			return;
 		}
 		const on = Boolean(equipped[slot]);
-		const sig = on ? `${equipped[slot].id}:${equipped[slot].plus || 0}${slot === "weapon" && hunterBlade(equipped[slot].id, equipped[slot].name) ? ":leaf3" : ""}` : "";
+		const sig = on ? `${equipped[slot].id}:${equipped[slot].plus || 0}${slot === "weapon" && hunterBlade(equipped[slot].id, equipped[slot].name) ? ":leaf4" : ""}` : "";
 		if (on && store[slot] && store[slot].userData.sig && store[slot].userData.sig !== sig) dropPiece(slot);
 		const wearable = slot === "weapon" || slot === "armor" || slot === "boots";
 		if (on && !store[slot] && !(model.userData.classMesh && !wearable)) {
