@@ -1705,6 +1705,8 @@ function World() {
       const model = createClassAvatar(classId);
       if (mine !== mountGen.current) return;
       for (const child of [...holder.children]) {
+        const release = (child.userData as { releaseBody?: () => void }).releaseBody;
+        release?.();
         holder.remove(child);
         disposeTree(child);
       }
@@ -1714,6 +1716,17 @@ function World() {
         remoteAvatars.current.clear();
       }
       holder.add(model);
+      model.userData.onWarriorReady = () => {
+        if (modelRef.current !== model) return;
+        model.updateMatrixWorld(true);
+        restRef.current = captureRest(model);
+        templateRef.current = cloneSkeleton(model);
+        const remoteHostNow = remoteRootRef.current;
+        if (remoteHostNow) {
+          for (const av of remoteAvatars.current.values()) remoteHostNow.remove(av.root);
+          remoteAvatars.current.clear();
+        }
+      };
       holder.updateMatrixWorld(true);
       modelRef.current = model;
       model.updateMatrixWorld(true);

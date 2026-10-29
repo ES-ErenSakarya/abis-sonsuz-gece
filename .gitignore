@@ -13,6 +13,7 @@ launcher/
 *.zip
 *.glb
 !public/models/leaf-sword.glb
+!public/models/warrior.glb
 *.exe
 !/Abis.exe
 *.pdb

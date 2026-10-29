@@ -558,6 +558,9 @@ function CharDoll({ classId, equipped, gearKey = "" }: { classId: ClassId; equip
     floor.position.y = 0.012;
     scene.add(floor);
     let framed = false;
+    avatar.userData.onWarriorReady = () => {
+      framed = false;
+    };
     const frameCamera = () => {
       avatar.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(avatar);
@@ -600,6 +603,8 @@ function CharDoll({ classId, equipped, gearKey = "" }: { classId: ClassId; equip
     return () => {
       cancelAnimationFrame(raf);
       watch.disconnect();
+      const release = (avatar.userData as { releaseBody?: () => void }).releaseBody;
+      release?.();
       renderer.dispose();
       avatar.traverse((obj) => {
         const mesh = obj as THREE.Mesh;

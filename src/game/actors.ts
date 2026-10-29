@@ -2,6 +2,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { weaponStyleOf } from "@/game/rpg";
+import { createWarriorRig } from "@/game/warriorBody";
 import { DUNGEON_BOUND, REALMS, VILLAGE_BOUND } from "@/game/world";
 
 function std(color, rough = 0.62, metal = 0.04) {
@@ -286,6 +287,7 @@ const CLASS_LOOK = {
 };
 export function createClassAvatar(classId) {
 	const look = CLASS_LOOK[classId] ?? CLASS_LOOK.savasci;
+	if (look.kind === "warrior") return createWarriorRig();
 	const root = new THREE.Group();
 	root.name = "class-avatar";
 	root.userData.classMesh = true;
@@ -352,19 +354,7 @@ export function createClassAvatar(classId) {
 		mesh(head, new THREE.SphereGeometry(0.02, 12, 10), cornea, side * 0.038, 0.028, 0.1);
 		mesh(head, new THREE.SphereGeometry(0.024, 10, 8), skin, side * 0.108, 0, 0).scale.set(0.38, 1.05, 0.55);
 	}
-	if (look.kind === "warrior") {
-		mesh(head, new THREE.BoxGeometry(0.055, 0.006, 0.008), std("#9a4a42", 0.5), 0.03, 0.02, 0.1).rotation.z = 0.5;
-		mesh(head, new THREE.BoxGeometry(0.04, 0.006, 0.008), std("#8a4038", 0.5), -0.02, -0.03, 0.1).rotation.z = -0.3;
-		for (let i = 0; i < 7; i++) {
-			const tuft = mesh(head, new THREE.ConeGeometry(0.008, 0.035, 4), std("#3a2c22", 0.8), (i - 3) * 0.012, -0.07, 0.06);
-			tuft.rotation.x = 0.4;
-		}
-		const belt = mesh(chest, new THREE.TorusGeometry(0.16 * b, 0.012, 6, 16), dark, 0, -0.08, 0);
-		belt.rotation.x = Math.PI / 2;
-		belt.userData.cover = "torso";
-		const cape = mesh(chest, new THREE.PlaneGeometry(0.42, 0.72, 4, 6), new THREE.MeshStandardMaterial({ color: "#4a1c18", roughness: 0.86, side: THREE.DoubleSide }), 0, -0.28, -0.2);
-		cape.castShadow = true;
-	} else if (look.kind === "mage") {
+	if (look.kind === "mage") {
 		mesh(head, new THREE.SphereGeometry(0.13, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), hair, 0, 0.05, -0.01);
 		for (let i = 0; i < 5; i++) {
 			const lock = mesh(head, new THREE.BoxGeometry(0.012, 0.22, 0.012), hair, (i - 2) * 0.02, -0.08, 0.02);
@@ -2105,6 +2095,10 @@ export function syncGear(model, equipped) {
 		return g;
 	};
 	Object.keys(equipped).forEach((slot) => {
+		if (model.userData.glbBody && slot !== "weapon") {
+			if (store[slot]) store[slot].visible = false;
+			return;
+		}
 		if (slot === "helmet") {
 			if (store.helmet) store.helmet.visible = false;
 			return;
