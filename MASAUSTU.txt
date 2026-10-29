@@ -1,15 +1,17 @@
 Abis: Sonsuz Gece — masaustu
 
-GitHub: https://github.com/ES-ErenSakarya/abis-sonsuz-gece
-Yesil Code dugmesi > Download ZIP. Zipi acin. Klasorun icinde su uc dosyadan birine cift tiklayin:
+Indir: https://github.com/ES-ErenSakarya/abis-sonsuz-gece
+Yesil Code dugmesi > Download ZIP. Zipi bir klasore cikar.
 
-  Abis.exe   Windows
-  Abis.bat   Windows
-  abis.py    Python kuruluysa (Windows, Mac veya Linux)
+Tam oyunu acmak icin klasordeki dosyaya cift tikla:
 
-Ilk acilista Node.js gerekir. Yoksa sayfa kendisi acilir:
-https://nodejs.org adresinden LTS surumunu kurun, dosyayi yeniden acin.
+  Abis.bat    Windows
+  abis.py     Python kuruluysa (Windows, Mac, Linux)
+  Abis.exe    Windows. Zipte yoksa Abis.bat ayni isi yapar.
 
-Ilk seferde paketler iner. Sonra tarayici acilir ve oyun baslar.
+Ilk acilista Node.js gerekir. Yoksa kurulum sayfasi acilir:
+https://nodejs.org adresinden LTS surumunu kur, dosyayi yeniden ac.
+
+Ilk sefer paketler iner, sonra tarayici acilir.
 Pencereyi kapatinca oyun durur. Kayitlar bu bilgisayarda kalir.
 Hesap, karakter, dovus, pazar ve sohbet ayni oyundur.
