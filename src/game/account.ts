@@ -62,6 +62,8 @@ function splitInvested(raw: unknown): {
   filledGear: string[];
   weekClaim: string;
   friends: { id: string; nick: string; level: number }[];
+  starterPots: boolean;
+  stallBank: number;
 } {
   const obj = asJson<Record<string, unknown>>(raw, {});
   const num = (key: string) => {
@@ -121,6 +123,8 @@ function splitInvested(raw: unknown): {
     mountSkills: mountSkillsOf(obj.mountSkills),
     filledGear: Array.isArray(obj.filledGear) ? obj.filledGear.filter((id) => typeof id === "string") : [],
     weekClaim: typeof obj.weekClaim === "string" ? obj.weekClaim : "",
+    starterPots: obj.starterPots === true,
+    stallBank: Math.max(0, Math.floor(num("stallBank"))),
     friends: Array.isArray(obj.friends)
       ? obj.friends
           .filter((row) => row && typeof row === "object" && typeof (row as { id?: unknown }).id === "string")
@@ -192,6 +196,8 @@ function rowOf(raw: {
     mountSkills: stats.mountSkills,
     filledGear: stats.filledGear,
     weekClaim: stats.weekClaim,
+    starterPots: stats.starterPots,
+    stallBank: stats.stallBank,
     friends: stats.friends,
     bag: asJson<CharacterSave["bag"]>(raw.bag, []),
     equipped: asJson<CharacterSave["equipped"]>(raw.equipped, {
@@ -238,10 +244,21 @@ export const setDeletePassword = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+async function compactCharacterSlots(sql: Awaited<ReturnType<typeof getSql>>, userId: string) {
+  const rows = await sql<{ id: string; slot: number }>`
+    select id, slot from characters where user_id = ${userId} order by slot asc, updated_at asc
+  `;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].slot === i) continue;
+    await sql`update characters set slot = ${i} where id = ${rows[i].id} and user_id = ${userId}`;
+  }
+}
+
 export const listCharacters = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {
     const sql = await getSql();
+    await compactCharacterSlots(sql, context.userId);
     const rows = await sql<{
       id: string;
       slot: number;
@@ -266,25 +283,23 @@ export const createCharacter = createServerFn({ method: "POST" })
   .validator((input: { slot: number; name: string; classId?: string }) => input)
   .middleware([authMiddleware])
   .handler(async ({ context, data }) => {
-    const slot = Math.floor(Number(data.slot));
     const name = data.name.trim().replace(/\s+/g, " ").slice(0, 16);
-    if (slot < 0 || slot > 5 || name.length < 2) return { ok: false as const, reason: "invalid" as const };
+    if (name.length < 2) return { ok: false as const, reason: "invalid" as const };
     const sql = await getSql();
-    const taken = await sql<{ id: string }>`
-      select id from characters where user_id = ${context.userId} and slot = ${slot}
-    `;
-    if (taken.length) return { ok: false as const, reason: "taken" as const };
+    await compactCharacterSlots(sql, context.userId);
     const count = await sql<{ n: number }>`
       select count(*)::int as n from characters where user_id = ${context.userId}
     `;
-    if (Number(count[0]?.n ?? 0) >= 6) return { ok: false as const, reason: "full" as const };
+    const taken = Number(count[0]?.n ?? 0);
+    if (taken >= 6) return { ok: false as const, reason: "full" as const };
+    const slot = taken;
     const named = await sql<{ id: string }>`
       select id from characters where lower(name) = lower(${name})
     `;
     if (named.length) return { ok: false as const, reason: "name" as const };
     const classId = asClassId(data.classId);
     const id = crypto.randomUUID();
-    const invested = JSON.stringify({ str: 0, hp: 0, ats: 0, mvs: 0, ctp: 0 });
+    const invested = JSON.stringify({ str: 0, hp: 0, ats: 0, mvs: 0, ctp: 0, starterPots: true });
     const bagSlots = Array.from({ length: BAG_SIZE }, () => null as unknown);
     bagSlots[0] = {
       uid: `chest-${id.slice(0, 8)}`,
@@ -298,7 +313,7 @@ export const createCharacter = createServerFn({ method: "POST" })
       ats: 0,
       mvs: 0,
       ctp: 0,
-      desc: "Açılınca sınıfının başlangıç silahını verir ve kaybolur.",
+      desc: "Açılınca sınıfının başlangıç silahını, 10 S can iksiri ve 10 S mana iksiri verir.",
     };
     const bag = JSON.stringify(bagSlots);
     const equipped = JSON.stringify({
@@ -314,8 +329,8 @@ export const createCharacter = createServerFn({ method: "POST" })
       belt: null,
     });
     await sql.query(
-      `insert into characters (id, user_id, slot, name, class_id, gold, invested, bag, equipped)
-       values ($1, $2, $3, $4, $5, 0, $6::jsonb, $7::jsonb, $8::jsonb)`,
+      `insert into characters (id, user_id, slot, name, class_id, gold, hp, invested, bag, equipped)
+       values ($1, $2, $3, $4, $5, 0, 400, $6::jsonb, $7::jsonb, $8::jsonb)`,
       [id, context.userId, slot, name, classId, invested, bag, equipped],
     );
     const rows = await sql<{
@@ -400,6 +415,8 @@ export const saveCharacter = createServerFn({ method: "POST" })
           },
           filledGear: Array.isArray(save.filledGear) ? save.filledGear : [],
           weekClaim: typeof save.weekClaim === "string" ? save.weekClaim : "",
+          starterPots: save.starterPots === true,
+          stallBank: Math.max(0, Math.floor(Number(save.stallBank) || 0)),
           friends: Array.isArray(save.friends) ? save.friends : [],
         }),
         JSON.stringify(Array.isArray(save.bag) ? save.bag.slice(0, BAG_SIZE) : []),
@@ -425,6 +442,7 @@ export const deleteCharacter = createServerFn({ method: "POST" })
     const match = await verifySecret(data.password ?? "", hash);
     if (!match) return { ok: false as const, reason: "bad-password" as const };
     await sql`delete from characters where id = ${data.id} and user_id = ${context.userId}`;
+    await compactCharacterSlots(sql, context.userId);
     return { ok: true as const };
   });
 

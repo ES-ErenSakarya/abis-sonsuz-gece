@@ -12,13 +12,15 @@ const HITS: Record<string, string> = {
   savasci: "/audio/kilic.mp3",
   ninja: "/audio/bicak.mp3",
   buyucu: "/audio/buyu.mp3",
-  okcu: "/audio/yay.mp3",
+  okcu: "/audio/ok.mp3",
 };
 
 const KEY = "abis-music";
 let volume = 0.5;
 let realm = "";
 let music: HTMLAudioElement | null = null;
+let menu: HTMLAudioElement | null = null;
+let menuOn = false;
 let hit: HTMLAudioElement | null = null;
 let unlocked = false;
 const listeners = new Set<() => void>();
@@ -56,19 +58,40 @@ export function writeMusic(next: number) {
     /* private mode */
   }
   if (music) music.volume = volume;
+  if (menu) menu.volume = volume;
   emit();
 }
 
+function ensureMenu() {
+  if (!menu) {
+    menu = new Audio("/audio/karakter.mp3");
+    menu.loop = true;
+    menu.preload = "auto";
+    menu.autoplay = true;
+  }
+  return menu;
+}
+
+function tryPlayMenu() {
+  if (!menuOn || !menu) return;
+  menu.volume = volume;
+  if (volume <= 0.001) {
+    menu.pause();
+    return;
+  }
+  if (menu.paused) void menu.play().catch(() => undefined);
+}
+
 function arm() {
-  if (unlocked) return;
   unlocked = true;
-  if (music && realm) void music.play().catch(() => undefined);
+  if (music && realm && music.paused) void music.play().catch(() => undefined);
+  tryPlayMenu();
 }
 
 if (typeof window !== "undefined") {
   loadMusic();
-  window.addEventListener("pointerdown", arm, { once: true });
-  window.addEventListener("keydown", arm, { once: true });
+  window.addEventListener("pointerdown", arm);
+  window.addEventListener("keydown", arm);
 }
 
 export function syncRealmMusic(nextRealm: string, active: boolean) {
@@ -94,7 +117,33 @@ export function syncRealmMusic(nextRealm: string, active: boolean) {
   if (unlocked && music.paused) void music.play().catch(() => undefined);
 }
 
+export function primeMenuMusic() {
+  unlocked = true;
+  const node = ensureMenu();
+  node.volume = menuOn ? volume : 0;
+  if (node.paused) void node.play().catch(() => undefined);
+}
+
+export function syncMenuMusic(active: boolean) {
+  menuOn = active;
+  const node = ensureMenu();
+  if (!active) {
+    node.pause();
+    return;
+  }
+  node.volume = volume;
+  if (volume <= 0.001) {
+    node.pause();
+    return;
+  }
+  if (node.paused) void node.play().catch(() => undefined);
+}
+
 const hitPool: HTMLAudioElement[] = [];
+
+export function playArrow() {
+  window.setTimeout(() => playAttack("okcu"), 500);
+}
 
 export function playAttack(classId: string) {
   const src = HITS[classId] || HITS.savasci;

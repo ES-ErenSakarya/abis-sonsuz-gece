@@ -4,11 +4,11 @@ import * as THREE from "three";
 import { adoptDummy, createBeast, createClassAvatar, createHorse, createMentor, createTownsman, createVendor, hitBeast, hitDummy, mitigate, mobBite, mobXp, RANGED_HIT, SPECIES, stickGear, syncBow, syncGear, tickBeast, tickDummy, tickVendor, weaponMesh, type Beast, type Dummy, type Mentor, type Vendor } from "@/game/actors";
 import { createCombat, type ShotTarget } from "@/game/combat";
 import { chatBubbles, systemSay } from "@/game/chat";
-import { amHost, broadcastStall, chestView, closeChest, emitHit, expireLoot, fieldLoot, fieldMobs, marketBoards, openChest, openStallView, placeChest, placeLoot, pushMobState, sendReward, setLootHint, shareXp, takePendingDrops, takeRemoteHits } from "@/game/field";
+import { amHost, broadcastStall, chestView, closeChest, emitHit, expireLoot, fieldLoot, fieldMobs, marketBoards, openChest, openStallView, placeChest, placeLoot, pushMobState, sendReward, setLootHint, shareXp, syncStallMarket, takePendingDrops, takeRemoteHits } from "@/game/field";
 import { useHud } from "@/game/hudStore";
 import { viewport } from "@/game/viewport";
-import { axes, held, input, sim, takeHop } from "@/game/input";
-import { BOSSES, MENTORS, bossChestItem, commitSkill, meteorLoot, questGuide, rankOf, refundSkill, rollKillLoot, takeCast, takeLevelPing, takeMountKick, tryReceiveItem, useRpg, weaponStyleOf, enchantView, type Item, type NearKind, type WeaponStyle } from "@/game/rpg";
+import { axes, held, input, releaseMoveKeys, sim, takeHop } from "@/game/input";
+import { BOSSES, MENTORS, bossChestItem, commitSkill, meteorLoot, questGuide, questNpcMarks, rankOf, refundSkill, rollKillLoot, takeCast, takeLevelPing, takeMountKick, tryReceiveItem, useRpg, weaponStyleOf, enchantView, type Item, type NearKind, type WeaponStyle } from "@/game/rpg";
 import { arenaFloor, beginRun, bindDungeonEnter, dungeonNow, endRun } from "@/game/dungeon";
 import { playAttack, syncRealmMusic } from "@/game/audio";
 import { effectiveGfx, loadGfx, subscribeGfx } from "@/game/settings";
@@ -992,6 +992,61 @@ function angerPack(list: Beast[], pack: number) {
 
 type Gait = "idle" | "walk" | "back" | "left" | "right";
 
+let worldFrame: ((dt: number) => void) | null = null;
+let bgTimer = 0;
+let keepCtx: AudioContext | null = null;
+let keepGain: GainNode | null = null;
+
+function startKeepAlive() {
+  const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctx) return;
+  if (!keepCtx) {
+    keepCtx = new Ctx();
+    const osc = keepCtx.createOscillator();
+    keepGain = keepCtx.createGain();
+    keepGain.gain.value = 0.00001;
+    osc.frequency.value = 180;
+    osc.connect(keepGain);
+    keepGain.connect(keepCtx.destination);
+    osc.start();
+  }
+  if (keepGain) keepGain.gain.value = 0.00001;
+  void keepCtx.resume();
+}
+
+function stopKeepAlive() {
+  if (keepGain) keepGain.gain.value = 0;
+  void keepCtx?.suspend();
+}
+
+function onHiddenChange() {
+  if (document.hidden) {
+    startKeepAlive();
+    if (!bgTimer) {
+      let last = performance.now();
+      bgTimer = window.setInterval(() => {
+        if (!document.hidden || !worldFrame) return;
+        const now = performance.now();
+        let gap = Math.min(2, Math.max(0, (now - last) / 1000));
+        last = now;
+        while (gap > 0.0001) {
+          const step = Math.min(0.05, gap);
+          worldFrame(step);
+          gap -= step;
+        }
+      }, 50);
+    }
+    return;
+  }
+  if (bgTimer) {
+    window.clearInterval(bgTimer);
+    bgTimer = 0;
+  }
+  stopKeepAlive();
+}
+
+if (typeof document !== "undefined") document.addEventListener("visibilitychange", onHiddenChange);
+
 function floatSprite(kind: "star" | "vial", text: string) {
   const canvas = document.createElement("canvas");
   canvas.width = 256;
@@ -1164,6 +1219,8 @@ function World() {
   const spaceWas = useRef(false);
   const ringRef = useRef<THREE.Group | null>(null);
   const guideRef = useRef<{ arrow: THREE.Group; beacon: THREE.Group } | null>(null);
+  const npcArrowRef = useRef<THREE.Object3D[]>([]);
+  const wasDown = useRef(false);
   const hostRef = useRef<THREE.Group | null>(null);
   const spawnClock = useRef<Record<string, number>>({});
   const zoneNote = useRef("");
@@ -1191,6 +1248,14 @@ function World() {
     guide.beacon.visible = false;
     group.add(guide.arrow, guide.beacon);
     guideRef.current = guide;
+    const npcArrows: THREE.Object3D[] = [];
+    for (let i = 0; i < 8; i++) {
+      const arrow = makeIconSprite("/ui/npc-ok.png", 0.62, 0.84);
+      arrow.visible = false;
+      group.add(arrow);
+      npcArrows.push(arrow);
+    }
+    npcArrowRef.current = npcArrows;
     const holder = new THREE.Group();
     holder.position.set(sim.x, 0, sim.z);
     group.add(holder);
@@ -1410,7 +1475,7 @@ function World() {
         break;
       }
       if (meteorSpots().find((row) => row.id === rock.id)?.live !== false) placeMeteor(rock.id, rock.x, rock.z, false);
-      const drops = meteorLoot(rock.level);
+      const drops = meteorLoot(rock.level, useRpg.getState().level, rock.realm);
       useRpg.getState().noteMeteor(rock.id);
       let stored = 0;
       for (const item of drops) {
@@ -1734,7 +1799,7 @@ function World() {
         envSrc.mapping = THREE.EquirectangularReflectionMapping;
         envSrc.needsUpdate = true;
         scene.environment = pmrem.fromEquirectangular(envSrc).texture;
-        scene.environmentIntensity = 0.4;
+        scene.environmentIntensity = 0.16;
         pmrem.dispose();
         useHud.getState().setReady(true);
       } catch (error) {
@@ -1770,6 +1835,17 @@ function World() {
         disposeTree(guide.beacon);
         guideRef.current = null;
       }
+      for (const arrow of npcArrowRef.current) {
+        arrow.parent?.remove(arrow);
+        const sprite = arrow as THREE.Sprite;
+        const mat = sprite.material;
+        if (mat && !Array.isArray(mat)) {
+          mat.map?.dispose();
+          mat.dispose();
+        }
+      }
+      npcArrowRef.current = [];
+      worldFrame = null;
       scene.remove(group);
       if (sky) scene.remove(sky);
       if (light) scene.remove(light.target);
@@ -1903,8 +1979,8 @@ function World() {
   };
 
   useFrame((_, delta) => {
+    const run = (dt: number) => {
     viewport.sync();
-    const dt = Math.min(delta, 0.05);
     let autoHit = false;
     tickCreative();
     tickStudio(dt, sim.x, sim.z);
@@ -2064,8 +2140,19 @@ function World() {
     if (hop && playing) {
       sim.x = hop.x;
       sim.z = hop.z;
+      sim.speed = 0;
+      engageRef.current = null;
     }
 
+    let sprinting = false;
+    const downNow = Boolean(playing && useRpg.getState().down);
+    if (downNow && !wasDown.current) {
+      engageRef.current = null;
+      setSelection(null);
+      releaseMoveKeys();
+    }
+    if (downNow) engageRef.current = null;
+    wasDown.current = downNow;
     if (!playing) {
       sim.speed = 0;
       sim.menuAngle += dt * 0.07;
@@ -2075,23 +2162,33 @@ function World() {
     } else if (useRpg.getState().mapLoad) {
       sim.speed = 0;
     } else {
-      const rangedMark = () => {
-        const styleNow = weaponStyleOf(useRpg.getState().equipped.weapon?.id);
-        if (styleNow !== "bow" && styleNow !== "staff") return null;
+      const styleChase = weaponStyleOf(useRpg.getState().equipped.weapon?.id);
+      const reachChase = styleChase === "bow" || styleChase === "staff" ? RANGED_HIT : styleChase === "dagger" ? 2.35 : 2.2;
+      let closing = false;
+      if (held("Space") && !useRpg.getState().chore && !useRpg.getState().down) {
         const sel = readTarget().sel;
-        if (!sel || (sel.kind !== "mob" && sel.kind !== "meteor")) return null;
-        if (sel.kind === "meteor") {
-          const rock = meteorRef.current.find((row) => row.id === sel.id && !row.broken);
-          if (!rock) return null;
-          return { id: sel.id, what: "meteor" as const, dist: Math.hypot(rock.x - sim.x, rock.z - sim.z) };
+        if (sel && (sel.kind === "mob" || sel.kind === "meteor")) {
+          let dist = 99;
+          let live = false;
+          if (sel.kind === "meteor") {
+            const rock = meteorRef.current.find((row) => row.id === sel.id && !row.broken);
+            if (rock) {
+              live = true;
+              dist = Math.hypot(rock.x - sim.x, rock.z - sim.z);
+            }
+          } else {
+            const mob = sel.id === "dummy" ? dummyRef.current : beastsRef.current.find((beast) => beast.id === sel.id && beast.alive) ?? null;
+            if (mob?.alive) {
+              live = true;
+              dist = Math.hypot(mob.root.position.x - sim.x, mob.root.position.z - sim.z);
+            }
+          }
+          if (live && dist > reachChase) {
+            closing = true;
+            engageRef.current = { kind: "fight", id: sel.id, what: sel.kind === "meteor" ? "meteor" : "mob" };
+          }
         }
-        const mob = sel.id === "dummy" ? dummyRef.current : beastsRef.current.find((beast) => beast.id === sel.id && beast.alive) ?? null;
-        if (!mob?.alive) return null;
-        return { id: sel.id, what: "mob" as const, dist: Math.hypot(mob.root.position.x - sim.x, mob.root.position.z - sim.z) };
-      };
-      const hunt = rangedMark();
-      const closing = Boolean(hunt && held("Space") && hunt.dist > RANGED_HIT);
-      if (closing && hunt) engageRef.current = { kind: "fight", id: hunt.id, what: hunt.what };
+      }
       const { fwd, str } = axes();
       const camYaw = input.orbit;
       sim.cameraYaw = camYaw;
@@ -2191,8 +2288,9 @@ function World() {
         }
       }
       const movingNow = len > 0.08;
-      const sprintHeld = held("ShiftLeft") || held("ShiftRight") || input.sprint || input.joyY > 0.82;
-      const sprinting = movingNow && sprintHeld && useRpg.getState().sta > 4;
+      const chasing = Boolean(order);
+      const sprintHeld = held("ShiftLeft") || held("ShiftRight") || input.sprint || input.joyY > 0.82 || chasing;
+      sprinting = movingNow && sprintHeld && useRpg.getState().sta > 4;
       const swinging = (fighterRef.current?.swing ?? 0) > 0.04;
       const pace = useRpg.getState().moveSpeed(sprinting) * (swinging ? 0.22 : 1);
       const target = movingNow ? pace * Math.min(1, len) : 0;
@@ -2258,14 +2356,16 @@ function World() {
       if (span) useRpg.getState().notePlace(span);
       if (!dungeonNow()) {
         const realmNow = realmAt(sim.x, sim.z);
-        const hub = realmNow.id === "koy" ? FENCE_R : 34;
-        const outDist = Math.hypot(sim.x - realmNow.x, sim.z - realmNow.z);
-        const outside = outDist > hub + 4;
-        if (!fieldSide.current) fieldSide.current = outside ? "out" : "in";
-        else if (fieldSide.current === "in" && outside) {
-          fieldSide.current = "out";
-          useRpg.getState().loadMap(`${realmNow.name} av sahası`);
-        } else if (!outside && outDist < hub - 6) fieldSide.current = "in";
+        if (realmNow.id !== "koy") {
+          const hub = 34;
+          const outDist = Math.hypot(sim.x - realmNow.x, sim.z - realmNow.z);
+          const outside = outDist > hub + 4;
+          if (!fieldSide.current) fieldSide.current = outside ? "out" : "in";
+          else if (fieldSide.current === "in" && outside) {
+            fieldSide.current = "out";
+            useRpg.getState().loadMap(`${realmNow.name} av sahası`);
+          } else if (!outside && outDist < hub - 6) fieldSide.current = "in";
+        }
       }
     }
 
@@ -2333,6 +2433,41 @@ function World() {
         showAt(x, z, y);
       }
     }
+    const arrows = npcArrowRef.current;
+    const marks = playing ? questNpcMarks() : [];
+    for (let i = 0; i < arrows.length; i++) {
+      const arrow = arrows[i];
+      const mark = marks[i] as { x: number; z: number; role?: string } | undefined;
+      if (!arrow) continue;
+      if (!mark) {
+        arrow.visible = false;
+        continue;
+      }
+      const role = mark.role;
+      let host: THREE.Object3D | null = null;
+      if (role === "smith" && smithRef.current) host = smithRef.current.root;
+      else if (role) {
+        let bestD = role === "herald" ? 80 : 8;
+        for (const town of townsRef.current) {
+          if (town.role !== role) continue;
+          const d = Math.hypot(town.root.position.x - mark.x, town.root.position.z - mark.z);
+          if (d < bestD) {
+            bestD = d;
+            host = town.root;
+          }
+        }
+      }
+      const x = host ? host.position.x : mark.x;
+      const z = host ? host.position.z : mark.z;
+      const y = (host ? host.position.y : groundY(x, z)) + 2.35;
+      const guideArrow = guideRef.current?.arrow;
+      if (guideArrow?.visible && Math.hypot(guideArrow.position.x - x, guideArrow.position.z - z) < 1.2) {
+        arrow.visible = false;
+        continue;
+      }
+      arrow.visible = true;
+      arrow.position.set(x, y + Math.sin(lifeRef.current * 3.2) * 0.12, z);
+    }
     if (playing && hostRef.current) {
       for (const sp of studioSpawners()) {
         let pack = 0;
@@ -2377,11 +2512,7 @@ function World() {
     const spaceDown = playing && (held("Space") || autoHit) && !tooling && !rpg.down && (!ranged || (marked && !tooFar));
     const pressed = spaceDown && !spaceWas.current;
     spaceWas.current = spaceDown;
-    const sprintingNow =
-      playing &&
-      moving &&
-      (held("ShiftLeft") || held("ShiftRight") || input.sprint);
-    const runTarget = sprintingNow ? 1 : 0;
+    const runTarget = sprinting ? 1 : 0;
     runBlend.current += (runTarget - runBlend.current) * (1 - Math.exp(-6 * dt));
     const fx = fighterRef.current;
     if (tooFar && fx) {
@@ -2395,7 +2526,7 @@ function World() {
     }
     const cap = style === "sword" || style === "pala" || style === "staff" ? 3 : style === "dagger" ? 2 : 1;
     if (fx) advanceSwing(fx, false, dt, rpg.attackGap(), { pressed, held: spaceDown, now: performance.now(), cap });
-    if (pressed) playAttack(cid);
+    if (pressed && cid !== "okcu") playAttack(cid);
     if (fx) fx.side = style === "dagger" && fx.combo === 2 ? -1 : 1;
     const armed = style !== "fist";
     const chore = rpg.chore;
@@ -2477,7 +2608,7 @@ function World() {
       }
     }
     if (playing) {
-      useRpg.getState().tick(dt, sprintingNow);
+      useRpg.getState().tick(dt, sprinting);
       const model = modelRef.current;
       if (model && useRpg.getState().gearRev !== gearRev.current) {
         gearRev.current = useRpg.getState().gearRev;
@@ -2505,7 +2636,7 @@ function World() {
             floatAt(beast.root.position.x, beast.root.position.y + 2.15, beast.root.position.z, `+${xp} XP · +${gold} altın`, false);
             const dungeonBoss = beast.boss && beast.pack >= 900;
             if (!dungeonBoss) {
-              const drops = rollKillLoot(beast.level, beast.boss, useRpg.getState().level);
+              const drops = rollKillLoot(beast.level, beast.boss, useRpg.getState().level, realmAt(beast.root.position.x, beast.root.position.z).id);
               if (drops.length) placeChest(drops as Item[], beast.root.position.x + (Math.random() - 0.5) * 0.4, beast.root.position.z + (Math.random() - 0.5) * 0.4);
             }
           }
@@ -3026,6 +3157,7 @@ function World() {
       if (stallClock.current > 1.2) {
         stallClock.current = 0;
         broadcastStall();
+        if (playing) void syncStallMarket();
       }
       const guests = guestStalls.current;
       const boards = marketBoards();
@@ -3284,12 +3416,12 @@ function World() {
     const light = lightRef.current;
     const inside = Boolean(dungeonNow());
     const hemi = hemiRef.current;
-    if (hemi) hemi.intensity = inside ? 0.05 : 0.72;
+    if (hemi) hemi.intensity = inside ? 0.05 : 0.55;
     if (inside) {
       if (!scene.fog) scene.fog = new THREE.Fog("#100c0a", 9, 30);
     } else if (scene.fog) scene.fog = null;
     if (light) {
-      light.intensity = inside ? 0.16 : 1.7;
+      light.intensity = inside ? 0.16 : 1.15;
       const focusX = playing ? sim.x : 0;
       const focusZ = playing ? sim.z : 0;
       const gy = groundY(focusX, focusZ, true);
@@ -3516,15 +3648,19 @@ function World() {
     }
     const probe = globalThis as typeof globalThis & { __selRing?: { visible: boolean; x: number; z: number } };
     probe.__selRing = { visible: live.visible, x: live.position.x, z: live.position.z };
+    };
+    worldFrame = run;
+    if (typeof document !== "undefined" && document.hidden) return;
+    run(Math.min(delta, 0.05));
   });
 
   return (
     <>
-      <hemisphereLight ref={hemiRef} args={["#d5e0e8", "#3a342c", 0.72]} />
+      <hemisphereLight ref={hemiRef} args={["#d5e0e8", "#3a342c", 0.55]} />
       <directionalLight
         ref={lightRef}
         position={[8, 12, 5]}
-        intensity={1.7}
+        intensity={1.15}
         color="#fff1dc"
       />
     </>
@@ -3538,12 +3674,13 @@ export function VillageScene() {
         shadows={false}
         dpr={1}
         performance={{ min: 0.5 }}
-        flat
         camera={{ fov: 42, near: 0.08, far: 720, position: [8, 7, 16] }}
         gl={{ antialias: false, alpha: false, stencil: false, powerPreference: "high-performance" }}
         onCreated={({ gl }) => {
           gl.setPixelRatio(1);
           gl.shadowMap.enabled = false;
+          gl.toneMapping = THREE.ACESFilmicToneMapping;
+          gl.toneMappingExposure = 0.92;
           gl.setClearColor("#6f8ea3");
         }}
       >

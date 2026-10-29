@@ -1,24 +1,25 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { bindControlsTest, bagDragging, input, peekEnter, queueHop, readSim, releaseEnter, setBagDrag, subscribeEnter } from "@/game/input";
+import { bindControlsTest, bagDragging, input, peekEnter, readSim, releaseEnter, releaseMoveKeys, setBagDrag, subscribeEnter } from "@/game/input";
 import { useHud } from "@/game/hudStore";
 import { HudAnchor, applyHudScale, hudAnchors, placeWindow } from "@/game/hudScale";
 import { effectiveGfx, GFX_PRESETS, loadGfx, readGfx, subscribeGfx, writeGfx, type GfxPreset } from "@/game/settings";
-import { applyHudLayout, hudEditing, loadHud, nudgeHud, readHud, resetHud, setHudEdit, setHudScale, subscribeHud, type HudId } from "@/game/hudLayout";
+import { HUD_LABEL, hudEditing, hudPick, loadHud, nudgeHud, pickHud, readHud, resetHud, resetPiece, setHudEdit, setPieceScale, subscribeHud, type HudId } from "@/game/hudLayout";
 import { loadMusic, readMusic, subscribeMusic, writeMusic } from "@/game/audio";
 import { viewport } from "@/game/viewport";
 import { armTouchHit } from "@/game/touchHit";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { AuthScreens, CharacterScreens, leaveToCharacters } from "@/game/AccountScreens";
 import { NetLive } from "@/game/NetLive";
-import { answerDuel, answerSocial, addTradeItem, blockMate, closeTrade, endDuel, leaveParty, offerDuel, offerSocial, offerTradeGold, queuePick, removeFriend, setTradeOk, subscribeTarget, targetSnapshot } from "@/game/target";
+import { answerDuel, answerSocial, addTradeItem, blockMate, closeTrade, endDuel, leaveParty, offerDuel, offerSocial, offerTradeGold, queuePick, removeFriend, setSelection, setTradeOk, subscribeTarget, targetSnapshot } from "@/game/target";
 import { chatAlpha, chatFocused, chatOpen, chatSnapshot, mailSnapshot, openMail, sendChat, sendWhisper, setChatFocus, setWhisper, subscribeChat, systemSay, whisperTarget } from "@/game/chat";
-import { askStallBuy, chestView, closeChest, closeStallView, fieldRev, lootHint, marketBoards, openNearChest, queueGroundDrop, scoopLoot, stallViewId, subscribeField, takeChestItem } from "@/game/field";
+import { askStallBuy, chestView, closeChest, closeStallView, fieldRev, lootHint, marketBoards, openNearChest, queueGroundDrop, scoopLoot, stallViewId, subscribeField, syncStallMarket, takeChestItem } from "@/game/field";
 import { captureSave, readCarry, setCarry } from "@/game/rpg";
 import { saveCharacter, leaderboard, type BoardRow } from "@/game/account";
 import { dungeonNow, requestDungeon, subscribeDungeon } from "@/game/dungeon";
 import { useSession } from "@/game/session";
-import { CATALOG, CLASS_TREES, BOSSES, claimWeekly, className, displayName, ENHANCE, GATE_COST, giverLabel, itemStats, matForPlus, MENTORS, offerForNpc, activeForNpc, readyForNpc, nextStoryRow, questBoardRow, questGiver, questGuide, questMapFor, questMatchesNpc, openBagCount, PAGE_SIZE, rankOf, saleGold, SKILL_MAX, skillCdLeft, skillCdTotal, skillPreview, skillTier, SLOT_LABEL, STAT_HINT, STAT_LABEL, sumStats, upgradeChance, useRpg, weaponStyleOf, CRAFTS, MOUNT_SKILLS, type CharTab, type EquipSlot, type Item, type NearKind, type ShopKind, type StatKey } from "@/game/rpg";
+import { CATALOG, CLASS_TREES, BOSSES, claimWeekly, className, displayName, ENHANCE, GATE_COST, giverLabel, itemStats, matForPlus, MENTORS, offerForNpc, activeForNpc, readyForNpc, nextStoryRow, questBoardRow, questGiver, questGuide, questLevelLock, questMapFor, questMatchesNpc, openBagCount, PAGE_SIZE, rankOf, saleGold, showsGearPlus, SKILL_MAX, skillCdLeft, skillCdTotal, skillPreview, skillTier, SLOT_LABEL, STAT_HINT, STAT_LABEL, sumStats, upgradeChance, useRpg, weaponStyleOf, CRAFTS, MOUNT_SKILLS, type CharTab, type EquipSlot, type Item, type NearKind, type ShopKind, type StatKey } from "@/game/rpg";
+import { withdrawStallBank } from "@/game/stalls";
 import { signOut } from "@/lib/auth/client";
 import { DUNGEON_BOUND, HOUSES, MAP_MARKS, REALMS, VILLAGE_BOUND, realmAt, realmGate, realmHerald } from "@/game/world";
 import {
@@ -115,7 +116,7 @@ function beginExit(kind: "char" | "out") {
   }, 200);
 }
 
-function EdgeIcon({ kind }: { kind: "stat" | "skill" | "bag" | "friend" | "gear" | "board" | "mail" }) {
+function EdgeIcon({ kind }: { kind: "stat" | "skill" | "bag" | "friend" | "gear" | "board" | "mail" | "chat" }) {
   const src =
     kind === "stat"
       ? "/ui/statu.png"
@@ -129,8 +130,10 @@ function EdgeIcon({ kind }: { kind: "stat" | "skill" | "bag" | "friend" | "gear"
               ? "/ui/mektup.png"
               : kind === "board"
                 ? "/ui/leaderboard.png"
-                : "/ui/ayarlar.png";
-  return <img src={src} alt="" className="edge-ico" draggable={false} />;
+                : kind === "chat"
+                  ? "/ui/sohbet.png"
+                  : "/ui/ayarlar.png";
+  return <img src={src} alt="" className={kind === "chat" ? "edge-ico is-chat" : "edge-ico"} draggable={false} />;
 }
 function GoldInline({ n }: { n: number | string }) {
   return (
@@ -273,21 +276,15 @@ function BootScreen({
   if (gone) return null;
   const shown = Math.min(100, Math.floor(pct));
   return (
-    <div className="absolute inset-0 z-[90] bg-black" data-ui>
-      <img src="/boot.jpg" alt="" className="absolute inset-0 h-full w-full object-cover" />
-      <div className="absolute inset-0 bg-black/50" />
-      <div className="absolute inset-x-0 bottom-[12%] flex flex-col items-center px-6">
-        <p className="mb-1 text-xs tracking-[0.35em] text-[#c9a15b]">ABİS</p>
-        <p className="mb-1.5 text-[13px] font-semibold tracking-wide text-[#e7fdff]" style={{ textShadow: "0 0 10px #4df0ff" }}>
-          {shown}%
-        </p>
-        <div className="h-3.5 w-[min(28rem,70vw)] overflow-hidden rounded-full border-2 border-[#3ad4e4] bg-black/75 p-px shadow-[0_0_18px_rgba(58,220,235,0.55)]">
+    <div className="boot-screen" data-ui>
+      <img src="/boot.jpg" alt="" className="boot-art" />
+      <div className="boot-load">
+        <p className="boot-pct">{shown}%</p>
+        <div className="boot-bar">
           <div
-            className="h-full rounded-full"
             style={{
               width: `${shown}%`,
               background: "linear-gradient(90deg, #042f38 0%, #0c7f92 38%, #5eebf8 82%, #ffffff 100%)",
-              boxShadow: "0 0 14px #6df6ff",
             }}
           />
         </div>
@@ -332,22 +329,16 @@ function EnterLoad() {
   if (!name) return null;
   const shown = Math.min(100, Math.floor(pct));
   return (
-    <div className="absolute inset-0 z-[90] bg-black" data-ui>
-      <img src="/boot.jpg" alt="" className="absolute inset-0 h-full w-full object-cover" />
-      <div className="absolute inset-0 bg-black/50" />
-      <div className="absolute inset-x-0 bottom-[12%] flex flex-col items-center px-6">
-        <p className="mb-1 text-xs tracking-[0.35em] text-[#c9a15b]">ABİS</p>
-        <p className="mb-1 text-sm text-[#e7fdff]">{name} yükleniyor</p>
-        <p className="mb-1.5 text-[13px] font-semibold tracking-wide text-[#e7fdff]" style={{ textShadow: "0 0 10px #4df0ff" }}>
-          {shown}%
-        </p>
-        <div className="h-3.5 w-[min(28rem,70vw)] overflow-hidden rounded-full border-2 border-[#3ad4e4] bg-black/75 p-px shadow-[0_0_18px_rgba(58,220,235,0.55)]">
+    <div className="boot-screen" data-ui>
+      <img src="/boot.jpg" alt="" className="boot-art" />
+      <div className="boot-load">
+        <p className="boot-name">{name} yükleniyor</p>
+        <p className="boot-pct">{shown}%</p>
+        <div className="boot-bar">
           <div
-            className="h-full rounded-full"
             style={{
               width: `${shown}%`,
               background: "linear-gradient(90deg, #042f38 0%, #0c7f92 38%, #5eebf8 82%, #ffffff 100%)",
-              boxShadow: "0 0 14px #6df6ff",
             }}
           />
         </div>
@@ -527,11 +518,14 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
   const [friendsOpen, setFriendsOpen] = useState(false);
   const [boardOpen, setBoardOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const hudEdit = useSyncExternalStore(subscribeHud, hudEditing, () => false);
   const [questHud, setQuestHud] = useState(true);
   const [menu, setMenu] = useState<null | "root" | "opts" | "hud">(null);
+  const uiRef = useRef({ friends: false, guide: false, board: false, map: false, menu: null as null | "root" | "opts" | "hud" });
   const menuRef = useRef(menu);
   const friendsRef = useRef(false);
   const eTap = useRef(0);
+  uiRef.current = { friends: friendsOpen, guide: guideOpen, board: boardOpen, map: mapOpen, menu };
   menuRef.current = menu;
   friendsRef.current = friendsOpen;
   const drag = useRef<{ x: number; y: number } | null>(null);
@@ -618,24 +612,53 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
         e.preventDefault();
         return;
       }
+      if (e.code === "Escape") {
+        e.preventDefault();
+        if (hudEditing()) {
+          setHudEdit(false);
+          return;
+        }
+        const rpg = useRpg.getState();
+        const panel = Boolean(rpg.invOpen || rpg.charOpen || rpg.shop || rpg.boardFor || rpg.npcAsk || rpg.bossPrompt);
+        if (panel) {
+          rpg.closePanels();
+          return;
+        }
+        const ui = uiRef.current;
+        if (ui.friends) {
+          setFriendsOpen(false);
+          return;
+        }
+        if (ui.guide) {
+          setGuideOpen(false);
+          return;
+        }
+        if (ui.board) {
+          setBoardOpen(false);
+          return;
+        }
+        if (ui.map) {
+          setMapOpen(false);
+          return;
+        }
+        if (!ui.menu) {
+          setMenu("root");
+          return;
+        }
+        if (!e.repeat) setMenu(null);
+        return;
+      }
       if (e.repeat) return;
+      if (hudEditing()) {
+        input.keys.delete("Space");
+        return;
+      }
       if (e.code === "Space") {
         const rpg = useRpg.getState();
         const style = weaponStyleOf(rpg.equipped.weapon?.id);
         if (rpg.chore?.kind === "fish" && rpg.chore.phase === "bite") rpg.reel();
         else if (!rpg.chore && style === "kazma") rpg.beginMine();
         else if (!rpg.chore && style === "olta") rpg.beginFish();
-      }
-      if (e.code === "Escape") {
-        useRpg.getState().closePanels();
-        setFriendsOpen(false);
-        setGuideOpen(false);
-        setBoardOpen(false);
-        setMapOpen(false);
-        setMenu(null);
-        setChatFocus(false);
-        e.preventDefault();
-        return;
       }
       if (e.code === "Enter") {
         setChatFocus(true);
@@ -648,12 +671,7 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
       if (e.code === "KeyB") useRpg.getState().showChar("quests");
       if (e.code === "KeyM") setMapOpen((open) => !open);
       if (e.code === "KeyN") setFriendsOpen((open) => !open);
-      if (e.code === "KeyH" && (e.ctrlKey || e.metaKey)) {
-        useRpg.getState().toggleRide();
-        e.preventDefault();
-        return;
-      }
-      if (e.code === "KeyH") useRpg.getState().toggleRide();
+      if (e.code === "KeyH" && !(e.ctrlKey || e.metaKey)) useRpg.getState().toggleRide();
       if (e.code === "F1") {
         useRpg.getState().drinkPotion("hp");
         e.preventDefault();
@@ -855,12 +873,12 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
             <PartyWindow />
             <WorldMap zone={zone} big={mapOpen} onToggle={() => setMapOpen((open) => !open)} />
             {friendsOpen ? <FriendsWindow onClose={() => setFriendsOpen(false)} /> : null}
-            {guideOpen ? <GuideBook onClose={() => setGuideOpen(false)} /> : null}
+            {(guideOpen) ? <GuideBook onClose={() => setGuideOpen(false)} /> : null}
             {boardOpen ? <BoardWindow onClose={() => setBoardOpen(false)} /> : null}
             <DungeonBanner />
             <Prompt />
             <ToolHud />
-            <div className="hud-side pointer-events-none absolute z-10" data-hud="quests">
+            <div className="hud-side pointer-events-none absolute z-10" data-hud="quests" data-label="Görev">
               <QuestTracker open={questHud} />
               <MailNotes />
             </div>
@@ -871,7 +889,24 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
             <BossPrompt />
             <EdgeBar onSettings={() => setMenu((open) => (open ? null : "root"))} onFriends={() => setFriendsOpen((open) => !open)} onBoard={() => setBoardOpen((open) => !open)} onGuide={() => setGuideOpen((open) => !open)} />
             <CreativeDock />
-            {menu ? <SettingsMenu mode={menu} onMode={setMenu} onClose={() => setMenu(null)} /> : null}
+            {menu ? (
+              <SettingsMenu
+                mode={menu}
+                onMode={setMenu}
+                onClose={() => setMenu(null)}
+                onPlace={() => {
+                  setFriendsOpen(false);
+                  setBoardOpen(false);
+                  setMapOpen(false);
+                  setGuideOpen(false);
+                  setChatFocus(false);
+                  useRpg.getState().closePanels();
+                  input.keys.delete("Space");
+                  setHudEdit(true);
+                  setMenu(null);
+                }}
+              />
+            ) : null}
             <HudMover />
             <SelectBar />
             <SocialHud />
@@ -888,6 +923,7 @@ export function Overlay({ sceneReady = false }: { sceneReady?: boolean }) {
                 data-joy
                 className="joy-stick hand-only absolute rounded-full border border-border bg-surface/80"
                 data-hud="joy"
+                data-label="Koş"
                 onPointerDown={joyDown}
                 onPointerMove={joyMove}
                 onPointerUp={joyUp}
@@ -1234,13 +1270,15 @@ function TouchCluster() {
   const style = weaponStyleOf(weaponId);
   const label = style === "kazma" ? "Kaz" : style === "olta" ? "Tut" : "Vur";
   return (
-    <div className="hand-cluster" data-ui data-hud="attack">
+    <div className="hand-cluster" data-ui>
       <div className="hand-actions">
         {steed ? (
           <button
             type="button"
             data-ui
-            className="hand-hit mr-2 grid place-items-center rounded-full border border-border bg-surface/95 text-[11px] text-fg"
+            data-hud="ride"
+            data-label={riding ? "İn" : "Bin"}
+            className="hand-hit grid place-items-center rounded-full border border-border bg-surface/95 text-[11px] text-fg"
             data-press="down"
             onPointerDown={(e) => {
               e.stopPropagation();
@@ -1253,6 +1291,8 @@ function TouchCluster() {
         <button
           type="button"
           data-ui
+          data-hud="attack"
+          data-label={label}
           className="hand-hit grid place-items-center rounded-full border border-gold bg-surface/95 text-[11px] font-medium text-gold"
           data-press="down"
           onPointerDown={(e) => {
@@ -1293,7 +1333,7 @@ function EdgeBar({ onSettings, onFriends, onBoard, onGuide }: { onSettings: () =
     </button>
   );
   return (
-    <div className="edge-bar" data-ui data-hud="edge">
+    <div className="edge-bar" data-ui data-hud="edge" data-label="Menü">
       {item("stat", "Statü", () => useRpg.getState().showChar("stats"))}
       {item("skill", "Yetenekler", () => useRpg.getState().showChar("skills"))}
       {item("bag", "Envanter", () => useRpg.getState().toggleInv())}
@@ -1303,6 +1343,9 @@ function EdgeBar({ onSettings, onFriends, onBoard, onGuide }: { onSettings: () =
       {item("friend", "Dostlar", onFriends)}
       <button type="button" data-ui className="edge-btn" aria-label="Sıralama" title="Sıralama" onPointerDown={(e) => e.stopPropagation()} onClick={onBoard}>
         <EdgeIcon kind="board" />
+      </button>
+      <button type="button" data-ui className="edge-btn" aria-label="Sohbet" title="Sohbet" onPointerDown={(e) => e.stopPropagation()} onClick={() => setChatFocus(!chatFocused())}>
+        <EdgeIcon kind="chat" />
       </button>
       <button type="button" data-ui className="edge-btn is-round" aria-label="Ayarlar" title="Ayarlar" onPointerDown={(e) => e.stopPropagation()} onClick={onSettings}>
         <EdgeIcon kind="gear" />
@@ -1318,6 +1361,7 @@ function WelcomeNote() {
   if (!playing || greeted) return null;
   return (
     <div className="welcome-note" data-ui onPointerDown={(e) => e.stopPropagation()}>
+      <div className="welcome-body">
       <p className="text-gold">Merhaba {className(cls)},</p>
       <p>Köye hoş geldin!</p>
       <p>Burası bir zamanlar huzurun hüküm sürdüğü, ancak kadim mühürlerin kırılmasıyla gölgelerin istilasına uğrayan Abis topraklarının sığınağı.</p>
@@ -1326,6 +1370,7 @@ function WelcomeNote() {
       <p>- Etrafındaki diğer savaşçılarla güçlerini birleştir; zindanların derinliklerinde tek başına yürümek cesaret değil, deliliktir.</p>
       <p>- Savaşarak tecrübe kazan, yeteneklerini geliştir ve efsanevi silahlara hayat ver.</p>
       <p>Efsaneler, karanlığı sarsacak kahramanın geleceğini fısıldıyordu. O kahraman sen misin?</p>
+      </div>
       <button type="button" className="welcome-go" onClick={() => {
         useRpg.setState({ greeted: true });
         const id = useSession.getState().activeId;
@@ -1419,7 +1464,7 @@ function Vitals() {
   const fame = useRpg((s) => s.fame);
   const rank = rankOf(fame);
   return (
-    <div className="hud-vitals pointer-events-auto absolute z-20" data-hud="vitals">
+    <div className="hud-vitals pointer-events-auto absolute z-20" data-hud="vitals" data-label="Can">
       <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface/90 p-3">
         <Bar label="CAN" value={hp} max={hpMax} tone="bg-hp" />
         <Bar label="MANA" value={mana} max={manaMax} tone="bg-mp" />
@@ -1596,6 +1641,7 @@ function SocialHud() {
 
 function ChatDock() {
   const lines = useSyncExternalStore(subscribeChat, chatSnapshot, chatSnapshot);
+  const editing = useSyncExternalStore(subscribeHud, hudEditing, () => false);
   const box = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState("");
   const [, setTick] = useState(0);
@@ -1603,18 +1649,18 @@ function ChatDock() {
   const shown = chatOpen();
   const alpha = chatAlpha();
   useEffect(() => {
-    if (open) box.current?.focus();
-  }, [open]);
+    if (open && !editing) box.current?.focus();
+  }, [open, editing]);
   useEffect(() => {
-    if (!shown || open) return;
+    if (!shown || open || editing) return;
     const timer = window.setInterval(() => setTick((n) => n + 1), 400);
     return () => window.clearInterval(timer);
-  }, [shown, open]);
-  if (!shown && !open) return null;
+  }, [shown, open, editing]);
+  if (!shown && !open && !editing) return null;
   const recent = lines.filter((line) => !line.whisper).slice(open ? -12 : -5);
   return (
-    <div data-ui className="hud-chat pointer-events-auto absolute left-1/2 z-20 -translate-x-1/2" style={{ opacity: open ? 1 : alpha }} onPointerDown={(e) => e.stopPropagation()}>
-      {recent.length > 0 ? (
+    <div data-ui className="hud-chat pointer-events-auto absolute left-1/2 z-20" data-hud="chat" data-label="Sohbet" style={{ opacity: open || editing ? 1 : alpha }} onPointerDown={(e) => e.stopPropagation()}>
+      {recent.length > 0 && !editing ? (
         <div className={`chat-log mb-1 max-h-28 overflow-hidden rounded-md px-2 py-1.5 ${open ? "bg-bg/80" : "bg-bg/35"}`}>
           {recent.map((line) => (
             <p key={line.id} className="truncate text-xs text-fg/90">
@@ -1624,11 +1670,12 @@ function ChatDock() {
           ))}
         </div>
       ) : null}
-      {open ? (
+      {open || editing ? (
       <form
         className="flex gap-1"
         onSubmit={(e) => {
           e.preventDefault();
+          if (editing) return;
           sendChat(draft);
           setDraft("");
           setChatFocus(false);
@@ -1640,11 +1687,16 @@ function ChatDock() {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onFocus={() => {
+            if (editing) {
+              box.current?.blur();
+              return;
+            }
             clearMove();
             setChatFocus(true);
           }}
           placeholder="Mesaj"
           maxLength={80}
+          readOnly={editing}
           className="min-w-0 flex-1 rounded-md border border-border bg-bg/95 px-2 py-1.5 text-sm text-fg outline-none"
         />
         <button type="submit" className="rounded-md border border-border bg-surface px-2 text-sm text-gold">
@@ -1775,7 +1827,8 @@ function Hotbar() {
     return () => window.clearInterval(timer);
   }, []);
   return (
-    <div data-ui className="hud-hotbar-wrap pointer-events-auto absolute z-20" data-hud="hotbar" onPointerDown={(e) => e.stopPropagation()}>
+    <div data-ui className="hud-hotbar-wrap pointer-events-auto absolute z-20" data-hud="hotbar" data-label="Kısayol" onPointerDown={(e) => e.stopPropagation()}>
+      <div className="xp-row">
       <div className="xp-split" onMouseEnter={() => setXpOn(true)} onMouseLeave={() => setXpOn(false)}>
         {[0, 1, 2, 3].map((part) => {
           const fill = Math.max(0, Math.min(1, pct * 4 - part));
@@ -1785,6 +1838,8 @@ function Hotbar() {
             </span>
           );
         })}
+      </div>
+      <span className="xp-pct">{Math.round(pct * 100)}%</span>
       </div>
       {xpOn ? (
         <div className="xp-tip">
@@ -1931,6 +1986,13 @@ function Hotbar() {
 function QuickButtons() {
   const unspent = useRpg((s) => s.unspent);
   const points = useRpg((s) => s.skillPoints);
+  const classId = useRpg((s) => s.classId);
+  const skills = useRpg((s) => s.skills);
+  const chosenTree = useRpg((s) => s.chosenTree);
+  const trees = CLASS_TREES[classId] ?? [];
+  const treeIndex = chosenTree?.startsWith(`${classId}:`) ? Number(chosenTree.slice(classId.length + 1)) : -1;
+  const tree = trees[treeIndex];
+  const skillsFull = !!tree && tree.skills.every((sk) => (skills[sk.id] ?? 0) >= SKILL_MAX);
   return (
     <>
       {unspent > 0 ? (
@@ -1939,7 +2001,7 @@ function QuickButtons() {
           <span>Statü</span>
         </button>
       ) : null}
-      {points > 0 ? (
+      {points > 0 && !skillsFull ? (
         <button type="button" data-ui className="hud-plus right-4" title="Beceri Geliştir" onClick={() => useRpg.getState().showChar("skills")}>
           <b>+</b>
           <span>Beceri</span>
@@ -1954,16 +2016,23 @@ function QuestTracker({ open }: { open: boolean }) {
   const active = quests.filter((quest) => !quest.claimed);
   const [tip, setTip] = useState<{ item: Item; x: number; y: number } | null>(null);
   const [way, setWay] = useState("");
+  const [lock, setLock] = useState("");
   useEffect(() => {
     let frame = 0;
     let last = "";
+    let lastLock = "";
     const loop = () => {
       const here = readSim();
       const guide = questGuide(here.x, here.z);
+      const note = questLevelLock();
       const next = guide?.label ?? "";
       if (next !== last) {
         last = next;
         setWay(next);
+      }
+      if (note !== lastLock) {
+        lastLock = note;
+        setLock(note);
       }
       frame = window.requestAnimationFrame(loop);
     };
@@ -1974,6 +2043,7 @@ function QuestTracker({ open }: { open: boolean }) {
   return (
     <div className="hud-quests pointer-events-auto rounded-md border border-border bg-surface/80 px-3 py-2">
       <p className="text-[10px] tracking-widest text-gold">Görevler</p>
+      {lock ? <p className="mt-1 text-[11px] text-gold">{lock}</p> : null}
       {way ? <p className="mt-1 text-[11px] text-gold">Yön: {way}</p> : null}
       {active.length === 0 ? <p className="mt-1 text-[11px] text-muted">Görev yok</p> : null}
       {active.slice(0, 4).map((quest) => {
@@ -2035,18 +2105,15 @@ function MailNotes() {
   );
 }
 
-function SettingsMenu({ mode, onMode, onClose }: { mode: "root" | "opts" | "hud"; onMode: (mode: "root" | "opts" | "hud") => void; onClose: () => void }) {
+function SettingsMenu({ mode, onMode, onClose, onPlace }: { mode: "root" | "opts" | "hud"; onMode: (mode: "root" | "opts" | "hud") => void; onClose: () => void; onPlace: () => void }) {
   const gfx = useSyncExternalStore(subscribeGfx, readGfx, readGfx);
   const live = useSyncExternalStore(subscribeGfx, effectiveGfx, effectiveGfx);
   const music = useSyncExternalStore(subscribeMusic, readMusic, readMusic);
-  const hud = useSyncExternalStore(subscribeHud, readHud, readHud);
-  const placing = useSyncExternalStore(subscribeHud, hudEditing, () => false);
   useEffect(() => {
     loadGfx();
     loadMusic();
     loadHud();
   }, []);
-  useEffect(() => () => setHudEdit(false), []);
   const go = (run: () => void) => {
     setHudEdit(false);
     onClose();
@@ -2058,7 +2125,8 @@ function SettingsMenu({ mode, onMode, onClose }: { mode: "root" | "opts" | "hud"
     onClose();
   };
   return (
-    <div data-ui className={`settings-menu hud-window pointer-events-auto absolute top-1/2 left-1/2 z-[80] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-surface/95 p-3 ${mode === "root" ? "w-[min(18rem,86vw)]" : "is-gfx w-[min(22rem,92vw)]"}`} onPointerDown={(e) => e.stopPropagation()}>
+    <div className="settings-veil" data-ui onPointerDown={(e) => e.stopPropagation()}>
+    <div className={`settings-menu hud-window pointer-events-auto rounded-xl border border-border bg-surface/95 p-3 ${mode === "root" ? "" : "is-gfx"}`}>
       {mode === "root" ? (
         <div className="flex flex-col gap-1.5">
           <p className="mb-1 text-xs tracking-widest text-gold">Ayarlar</p>
@@ -2086,6 +2154,26 @@ function SettingsMenu({ mode, onMode, onClose }: { mode: "root" | "opts" | "hud"
           >
             Oyun Sonu
           </button>
+          <button
+            type="button"
+            className="rounded-md border border-border px-3 py-2 text-left text-sm"
+            onClick={() => {
+              const rpg = useRpg.getState();
+              releaseMoveKeys();
+              setSelection(null);
+              useRpg.setState({
+                riding: false,
+                mapLoad: "",
+                shop: null,
+                down: null,
+                hp: rpg.down || rpg.hp < 1 ? Math.max(1, Math.round(rpg.hpMax * 0.35)) : rpg.hp,
+                toast: "Olduğun yerde toparlandın",
+              });
+              close();
+            }}
+          >
+            Karakteri bugdan kurtar
+          </button>
           <button type="button" className="rounded-md border border-gold px-3 py-2 text-left text-sm text-gold" onClick={close}>
             İptal
           </button>
@@ -2093,27 +2181,10 @@ function SettingsMenu({ mode, onMode, onClose }: { mode: "root" | "opts" | "hud"
       ) : mode === "hud" ? (
         <div className="settings-scroll flex flex-col gap-2 text-sm">
           <p className="text-xs tracking-widest text-gold">Arayüz</p>
-          <label className="flex items-center justify-between gap-2">
-            Boyut
-            <span className="flex items-center gap-2">
-              <input
-                type="range"
-                min={0.6}
-                max={1.6}
-                step={0.05}
-                value={hud.scale}
-                onChange={(e) => {
-                  setHudScale(Number(e.target.value));
-                  applyHudScale();
-                }}
-              />
-              <span className="w-8 text-right text-xs tabular-nums text-gold">{Math.round(hud.scale * 100)}</span>
-            </span>
-          </label>
-          <button type="button" className={`rounded-md border px-3 py-1.5 text-left ${placing ? "border-gold text-gold" : "border-border"}`} onClick={() => setHudEdit(!placing)}>
-            {placing ? "Yerleştirme açık · bitir" : "Sürükleyerek yerleştir"}
+          <button type="button" className="rounded-md border border-gold px-3 py-1.5 text-left text-gold" onClick={onPlace}>
+            Sürükleyerek yerleştir
           </button>
-          <p className="text-[11px] leading-snug text-muted">Açıkken can, harita, görevler, kısayol, yön, saldırı ve menü parçalarını tutup taşı. Altın çerçeve sürüklenen parçadır.</p>
+          <p className="text-[11px] leading-snug text-muted">Bir parçaya dokun. Seçilenin adı üstte görünür ve kalın altın çerçeve alır. Boyut yalnız ona uygulanır.</p>
           <button
             type="button"
             className="rounded-md border border-border px-3 py-1.5 text-left"
@@ -2122,7 +2193,7 @@ function SettingsMenu({ mode, onMode, onClose }: { mode: "root" | "opts" | "hud"
               applyHudScale();
             }}
           >
-            Sıfırla
+            Tümünü sıfırla
           </button>
           <button type="button" className="rounded-md border border-border px-3 py-1.5 text-left" onClick={() => { setHudEdit(false); onMode("root"); }}>
             Geri
@@ -2213,30 +2284,47 @@ function SettingsMenu({ mode, onMode, onClose }: { mode: "root" | "opts" | "hud"
         </div>
       )}
     </div>
+    </div>
   );
 }
 
 function HudMover() {
   const on = useSyncExternalStore(subscribeHud, hudEditing, () => false);
-  const drag = useRef<{ id: HudId; x: number; y: number; pid: number } | null>(null);
+  const hud = useSyncExternalStore(subscribeHud, readHud, readHud);
+  const pick = useSyncExternalStore(subscribeHud, hudPick, () => null);
+  const drag = useRef<{ id: HudId; x: number; y: number; pid: number; moved: boolean } | null>(null);
   useEffect(() => {
     if (!on) return;
+    const piece = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el?.closest) return null;
+      if (el.closest(".hud-edit-dock")) return null;
+      return el.closest("[data-hud]") as HTMLElement | null;
+    };
+    const allow = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      return Boolean(el?.closest?.(".hud-edit-dock"));
+    };
     const down = (e: PointerEvent) => {
-      const node = (e.target as HTMLElement | null)?.closest?.("[data-hud]") as HTMLElement | null;
+      if (allow(e.target)) return;
+      const node = piece(e.target);
+      e.preventDefault();
+      e.stopPropagation();
       if (!node) return;
       const id = node.dataset.hud as HudId | undefined;
       if (!id) return;
-      e.preventDefault();
-      e.stopPropagation();
-      drag.current = { id, x: e.clientX, y: e.clientY, pid: e.pointerId };
-      node.setPointerCapture?.(e.pointerId);
+      pickHud(id);
+      drag.current = { id, x: e.clientX, y: e.clientY, pid: e.pointerId, moved: false };
     };
     const move = (e: PointerEvent) => {
       const row = drag.current;
       if (!row || e.pointerId !== row.pid) return;
+      e.preventDefault();
       const dx = e.clientX - row.x;
       const dy = e.clientY - row.y;
       if (dx === 0 && dy === 0) return;
+      if (!row.moved && Math.hypot(e.clientX - row.x, e.clientY - row.y) < 4 && dx * dx + dy * dy < 16) return;
+      row.moved = true;
       row.x = e.clientX;
       row.y = e.clientY;
       nudgeHud(row.id, dx, dy);
@@ -2244,20 +2332,62 @@ function HudMover() {
     const up = (e: PointerEvent) => {
       if (drag.current?.pid === e.pointerId) drag.current = null;
     };
-    document.addEventListener("pointerdown", down, true);
-    document.addEventListener("pointermove", move, true);
-    document.addEventListener("pointerup", up, true);
-    document.addEventListener("pointercancel", up, true);
+    const swallow = (e: Event) => {
+      if (allow(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const opts = { capture: true, passive: false } as const;
+    document.addEventListener("pointerdown", down, opts);
+    document.addEventListener("pointermove", move, opts);
+    document.addEventListener("pointerup", up, opts);
+    document.addEventListener("pointercancel", up, opts);
+    document.addEventListener("click", swallow, true);
     return () => {
       drag.current = null;
-      document.removeEventListener("pointerdown", down, true);
-      document.removeEventListener("pointermove", move, true);
-      document.removeEventListener("pointerup", up, true);
-      document.removeEventListener("pointercancel", up, true);
+      input.keys.delete("Space");
+      document.removeEventListener("pointerdown", down, opts);
+      document.removeEventListener("pointermove", move, opts);
+      document.removeEventListener("pointerup", up, opts);
+      document.removeEventListener("pointercancel", up, opts);
+      document.removeEventListener("click", swallow, true);
     };
   }, [on]);
   if (!on) return null;
-  return <p className="hud-edit-banner">Arayüzü sürükle · altın çerçeveli parçalar taşınır</p>;
+  const scale = pick ? hud.size[pick] : 1;
+  return (
+    <div className="hud-edit-dock" data-ui onPointerDown={(e) => e.stopPropagation()}>
+      <span className={pick ? "is-pick" : ""}>{pick ? HUD_LABEL[pick] : "Parça seç"}</span>
+      <input
+        type="range"
+        min={0.6}
+        max={1.6}
+        step={0.05}
+        value={scale}
+        disabled={!pick}
+        aria-label="Boyut"
+        onPointerDown={(e) => e.stopPropagation()}
+        onChange={(e) => {
+          if (!pick) return;
+          setPieceScale(pick, Number(e.target.value));
+        }}
+      />
+      <span className="w-8 text-right tabular-nums">{pick ? Math.round(scale * 100) : "—"}</span>
+      <button
+        type="button"
+        disabled={!pick}
+        onClick={() => {
+          if (!pick) return;
+          resetPiece(pick);
+        }}
+      >
+        Sıfırla
+      </button>
+      <button type="button" onClick={() => setHudEdit(false)}>
+        Bitir
+      </button>
+    </div>
+  );
 }
 
 function PartyWindow() {
@@ -2471,9 +2601,10 @@ const GUIDE = [
 ];
 
 function GuideBook({ onClose }: { onClose: () => void }) {
-  const [open, setOpen] = useState<string | null>(null);
+  const [page, setPage] = useState<number | null>(null);
+  const topic = page == null ? null : GUIDE[page];
   return (
-    <div data-ui className="guide-sheet hud-window pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
+    <div data-ui className="guide-sheet hud-window pointer-events-auto" data-hud="notes" data-label="Mesajlar" onPointerDown={(e) => e.stopPropagation()}>
       <div className="friend-head">
         <div>
           <p className="text-[10px] tracking-[0.28em] text-gold/80">ABİS</p>
@@ -2483,16 +2614,23 @@ function GuideBook({ onClose }: { onClose: () => void }) {
           ×
         </button>
       </div>
-      <div className="guide-list">
-        {GUIDE.map(([title, body]) => (
-          <article key={title}>
-            <button type="button" className="w-full text-left" onClick={() => setOpen((cur) => (cur === title ? null : title))}>
-              <h3>{title}</h3>
+      {topic ? (
+        <div className="guide-read">
+          <p className="guide-read-title">{topic[0]}</p>
+          <p>{topic[1]}</p>
+          <button type="button" className="guide-back" onClick={() => setPage(null)}>
+            Geri
+          </button>
+        </div>
+      ) : (
+        <div className="guide-picks">
+          {GUIDE.map(([title], index) => (
+            <button key={title} type="button" onClick={() => setPage(index)}>
+              {title}
             </button>
-            {open === title ? <p>{body}</p> : null}
-          </article>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -2668,6 +2806,7 @@ function WorldMap({ zone, big, onToggle }: { zone: string; big: boolean; onToggl
         type="button"
         className="block"
         data-hud={big ? undefined : "map"}
+        data-label={big ? undefined : "Harita"}
         onClick={(e) => {
           if (skipClick.current) {
             skipClick.current = false;
@@ -2688,8 +2827,8 @@ function WorldMap({ zone, big, onToggle }: { zone: string; big: boolean; onToggl
             style={{
               left: px,
               top: py,
-              width: Math.max(16, size * 0.11),
-              height: Math.max(28, size * 0.28),
+              width: Math.max(9, Math.round(size * 0.048)),
+              height: Math.max(14, Math.round(size * 0.078)),
               transform: `translate(-50%, -50%) rotate(${deg}deg)`,
             }}
             onMouseEnter={(e) => {
@@ -3049,7 +3188,7 @@ function Tip({ item, x, y }: { item: Item; x: number; y: number }) {
                   : item.kind === "bag"
                     ? "Eşya"
                     : `${SLOT_LABEL[item.slot] ?? "Eşya"}${item.kind === "gear" || !item.kind ? ` · Sv.${item.level}` : ""}`}
-        {item.plus > 0 ? ` · +${item.plus}` : ""}
+        {showsGearPlus(item) ? ` · +${Math.max(0, Math.floor(Number(item.plus) || 0))}` : ""}
       </p>
       {rows.length ? <p>{rows.join(" · ")}</p> : null}
       {item.count && item.count > 1 ? <p>Adet {item.count}</p> : null}
@@ -3229,7 +3368,10 @@ function Inventory({ docked = false }: { docked?: boolean }) {
   const tabTimer = useRef(0);
   const [split, setSplit] = useState<{ index: number; max: number; n: string } | null>(null);
   const show = (item: Item | null, ev: MouseEvent) => {
-    if (!item) return;
+    if (bagDragging() || !item) {
+      if (bagDragging()) setTip(null);
+      return;
+    }
     setTip({ item, x: ev.clientX, y: ev.clientY });
   };
   const move = (clientX: number, clientY: number) => {
@@ -3314,6 +3456,7 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                 onClick={() => it && useRpg.getState().unequip(slot)}
                 onDoubleClick={() => it && useRpg.getState().unequip(slot)}
                 onDragStart={(e) => {
+                  setTip(null);
                   setBagDrag(true);
                   setCarry({ kind: "slot", slot });
                   e.dataTransfer.setData("text/plain", `slot:${slot}`);
@@ -3362,6 +3505,7 @@ function Inventory({ docked = false }: { docked?: boolean }) {
               else useRpg.setState({ toast: "Çanta dolu" });
             }}
             onDragStart={(e) => {
+              setTip(null);
               setBagDrag(true);
               setCarry({ kind: "bag", index: -1 });
               e.dataTransfer.setData("text/plain", "mount:1");
@@ -3436,6 +3580,10 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                   className={locked ? "octo-slot is-lock" : "octo-slot"}
                   onMouseEnter={(e) => show(it, e)}
                   onMouseMove={(e) => {
+                    if (bagDragging()) {
+                      setTip(null);
+                      return;
+                    }
                     const live = locked ? null : (useRpg.getState().bag[index] ?? null);
                     if (live) setTip({ item: live, x: e.clientX, y: e.clientY });
                     else setTip(null);
@@ -3459,6 +3607,7 @@ function Inventory({ docked = false }: { docked?: boolean }) {
                     setTip(live ? { item: live, x: e.clientX, y: e.clientY } : null);
                   }}
                   onDragStart={(e) => {
+                    setTip(null);
                     setBagDrag(true);
                     setCarry({ kind: "bag", index });
                     e.dataTransfer.setData("text/plain", `bag:${index}`);
@@ -3584,6 +3733,8 @@ function Character() {
   const classId = useRpg((s) => s.classId);
   const [questPage, setQuestPage] = useState(0);
   const [questTrack, setQuestTrack] = useState<"ana" | "yan" | "av">("ana");
+  const [skillPane, setSkillPane] = useState<"class" | "mount">("class");
+  const [treeLook, setTreeLook] = useState(0);
   const totals = sumStats({ base, invested, equipped, level, skills });
   const rank = rankOf(fame);
   const [pos, setPos] = useState(() => charPin.place(typeof window === "undefined" ? 1280 : window.innerWidth, typeof window === "undefined" ? 800 : window.innerHeight));
@@ -3601,8 +3752,7 @@ function Character() {
     if (!drag.current) return;
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const wide = charTab === "skills" && !useRpg.getState().chosenTree;
-    const placed = placeWindow(charPin, w, h, wide);
+    const placed = placeWindow(charPin, w, h, false);
     const next = {
       x: Math.max(w * 0.01, Math.min(w - placed.boxW, clientX - drag.current.dx)),
       y: Math.max(h * 0.01, Math.min(h * 0.88, clientY - drag.current.dy)),
@@ -3615,12 +3765,13 @@ function Character() {
   return (
     <section
       data-ui
-      className={`char-sheet hud-window pointer-events-auto absolute break-words rounded-xl border border-border/80 bg-surface/95 p-3 text-fg ${charTab === "skills" && !chosenTree ? "skill-wide" : ""}`}
+      className="char-sheet hud-window pointer-events-auto absolute flex flex-col break-words rounded-xl border border-border/80 bg-surface/95 p-2 text-fg"
       style={{ left: pos.x, top: pos.y }}
       onPointerDown={(e) => e.stopPropagation()}
+      onWheel={(e) => e.preventDefault()}
     >
       <div
-        className="mb-3 flex cursor-grab items-center justify-between active:cursor-grabbing"
+        className="mb-1 flex shrink-0 cursor-grab items-center justify-between active:cursor-grabbing"
         onPointerDown={(e) => {
           if ((e.target as HTMLElement).closest("button")) return;
           drag.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y };
@@ -3631,35 +3782,35 @@ function Character() {
           drag.current = null;
         }}
       >
-        <p className="font-display text-lg text-gold">{charTab === "stats" ? "Statü" : charTab === "skills" ? "Yetenek" : "Görevler"}</p>
+        <p className="font-display text-base text-gold">{charTab === "stats" ? "Statü" : charTab === "skills" ? "Yetenek" : "Görevler"}</p>
         <button type="button" className="text-xs text-muted" onClick={() => useRpg.setState({ charOpen: false })}>
           Kapat
         </button>
       </div>
+      <div className="char-body">
       {charTab === "stats" ? (
-        <p className="mb-2 text-xs text-muted">Ünvan puanı {fame}</p>
+        <p className="mb-0.5 text-[11px] text-muted">Ünvan puanı {fame}</p>
       ) : null}
       {charTab === "stats" && rank ? (
-        <p className={rank.glow ? "rank-name is-glow -mt-2 mb-2 text-sm" : "rank-name -mt-2 mb-2 text-sm"} style={{ color: rank.color }}>
+        <p className={rank.glow ? "rank-name is-glow mb-0.5 text-sm" : "rank-name mb-0.5 text-sm"} style={{ color: rank.color }}>
           {rank.name}
         </p>
       ) : null}
       {charTab === "stats" ? (
-        <p className="mb-3 text-xs text-muted">
-          {className(classId)} · Sv. {level}
-          {rank ? (
-            <span className={rank.glow ? "rank-name is-glow" : "rank-name"} style={{ color: rank.color }}>
-              {" "}
-              {rank.name}
-            </span>
-          ) : null}
-          {" "}· {Math.floor(xp)}/{xpTo} · Puan {unspent}
+        <p className="mb-1 text-[11px] text-muted">
+          {className(classId)} · Sv. {level} · {Math.floor(xp)}/{xpTo} · Puan {unspent}
         </p>
       ) : charTab === "skills" ? (
-        <p className="mb-3 text-xs text-muted">{level < 5 ? "Yetenekler 5. seviyede açılır." : !mentored ? "Önce sınıfının ustasına uğra. Usta sarı okla durur." : `Yetenek puanı ${skillPoints}`}</p>
+        <>
+        <div className="mb-1 flex gap-1">
+          <button type="button" className={skillPane === "class" ? "rounded-md border border-gold px-2 py-0.5 text-[11px] text-gold" : "rounded-md border border-border px-2 py-0.5 text-[11px] text-muted"} onClick={() => setSkillPane("class")}>Yetenekler</button>
+          <button type="button" className={skillPane === "mount" ? "rounded-md border border-gold px-2 py-0.5 text-[11px] text-gold" : "rounded-md border border-border px-2 py-0.5 text-[11px] text-muted"} onClick={() => setSkillPane("mount")}>At</button>
+        </div>
+        <p className="mb-1 text-[11px] text-muted">{skillPane === "mount" ? "Seyis'te kitap ile gelişir. Öğrenileni alta sürükle." : level < 5 ? "Yetenekler 5. seviyede açılır." : !mentored ? "Önce sınıfının ustasına uğra." : `Yetenek puanı ${skillPoints}`}</p>
+        </>
       ) : null}
       {charTab === "quests" ? (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1">
           <div className="flex gap-1">
             {([
               ["ana", "Ana Görev"],
@@ -3669,7 +3820,7 @@ function Character() {
               <button
                 key={id}
                 type="button"
-                className={questTrack === id ? "rounded-md border border-gold px-2 py-1 text-[11px] text-gold" : "rounded-md border border-border px-2 py-1 text-[11px] text-muted"}
+                className={questTrack === id ? "flex-1 rounded-md border border-gold px-1 py-0.5 text-[10px] text-gold" : "flex-1 rounded-md border border-border px-1 py-0.5 text-[10px] text-muted"}
                 onClick={() => {
                   setQuestTrack(id);
                   setQuestPage(0);
@@ -3681,17 +3832,17 @@ function Character() {
           </div>
           {(() => {
             const openQuests = quests.filter((quest) => !quest.claimed && (quest.track || "av") === questTrack);
-            const qPages = Math.max(1, Math.ceil(openQuests.length / 4));
+            const qPages = Math.max(1, Math.ceil(openQuests.length / 3));
             const qSafe = Math.min(questPage, qPages - 1);
-            const view = openQuests.slice(qSafe * 4, qSafe * 4 + 4);
+            const view = openQuests.slice(qSafe * 3, qSafe * 3 + 3);
             const empty = questTrack === "ana" ? "Ana görev, veren NPC'den alınır. Av ve yan görevle aynı anda durur." : questTrack === "yan" ? "Yan görev NPC'den alınır. Meteor kırma seviyene göre kendiliğinden gelir." : "Av görevi seviyene göre kendiliğinden gelir.";
             return (
               <>
                 {openQuests.length === 0 ? <p className="text-xs text-muted">{empty}</p> : null}
                 {view.map((quest) => (
-                  <div key={quest.id} className="rounded-md border border-border bg-bg/70 px-2 py-1.5 text-xs">
+                  <div key={quest.id} className="rounded-md border border-border bg-bg/70 px-2 py-1 text-[11px] leading-tight">
                     <p className="text-gold">{quest.title}{quest.minLevel ? ` · Sv.${quest.minLevel}` : ""}</p>
-                    <p className="text-muted">{quest.detail}</p>
+                    <p className="truncate text-muted">{quest.detail}</p>
                     <p>{quest.done || quest.have >= quest.need ? `${giverLabel(questGiver(questBoardRow(quest)))} teslim alır` : `${Math.min(quest.have, quest.need)}/${quest.need}`}</p>
                   </div>
                 ))}
@@ -3700,11 +3851,44 @@ function Character() {
             );
           })()}
         </div>
+      ) : charTab === "skills" && skillPane === "mount" ? (
+        <div className="flex flex-col gap-1">
+          {MOUNT_SKILLS.map((sk) => {
+            const rank = mountSkills[sk.id] ?? 0;
+            return (
+              <div
+                key={sk.id}
+                draggable={rank > 0}
+                title={sk.line}
+                onDragStart={(e) => {
+                  if (rank <= 0) {
+                    e.preventDefault();
+                    return;
+                  }
+                  e.dataTransfer.setData("text/plain", `skill:${sk.id}`);
+                  e.dataTransfer.effectAllowed = "copy";
+                }}
+                className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border border-border bg-bg/70 px-2 py-1 text-[11px]"
+              >
+                <SkillMark id={sk.id} />
+                <span className="min-w-0 truncate">{sk.name}</span>
+                <b className="tabular-nums text-gold">{rank > 0 ? skillTier(rank) : "—"}</b>
+              </div>
+            );
+          })}
+        </div>
       ) : charTab === "skills" ? (
-        <div className={chosenTree ? "skill-board grid min-w-0 grid-cols-1 items-start gap-3" : "skill-board grid min-w-0 grid-cols-2 items-start gap-3"}>
+        <div className="flex flex-col gap-1">
+          {!chosenTree ? (
+            <div className="mb-1 flex gap-1">
+              {trees.map((tree, index) => (
+                <button key={tree.name} type="button" className={treeLook === index ? "rounded-md border border-gold px-2 py-1 text-[11px] text-gold" : "rounded-md border border-border px-2 py-1 text-[11px] text-muted"} onClick={() => setTreeLook(index)}>{tree.name}</button>
+              ))}
+            </div>
+          ) : null}
           {trees.map((tree, index) => {
             const key = `${classId}:${index}`;
-            if (chosenTree && chosenTree !== key) return null;
+            if (chosenTree ? chosenTree !== key : treeLook !== index) return null;
             return (
               <div key={tree.name}>
                 <p className="mb-1 text-xs text-gold">{tree.name}{chosenTree === key ? " · seçili" : ""}</p>
@@ -3712,9 +3896,7 @@ function Character() {
                   {tree.skills.map((sk) => {
                     const rank = skills[sk.id] ?? 0;
                     const preview = skillPreview(sk.id, rank, totals);
-                    const tip = preview.buff
-                      ? `${sk.desc} Seviye ${skillTier(rank)}`
-                      : `${sk.desc} Hasar ${preview.dmg}. Sonraki ${preview.next}.`;
+                    const tip = preview.buff ? `${sk.desc} Seviye ${skillTier(rank)}` : `${sk.desc} Hasar ${preview.dmg}. Sonraki ${preview.next}.`;
                     return (
                       <div
                         key={sk.id}
@@ -3724,22 +3906,14 @@ function Character() {
                           e.dataTransfer.setData("text/plain", `skill:${sk.id}`);
                           e.dataTransfer.effectAllowed = "copy";
                         }}
-                        className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md border border-border bg-bg/70 px-2 py-1.5 text-xs"
+                        className={`grid min-w-0 items-center gap-1.5 rounded-md border border-border bg-bg/70 px-2 py-1 text-[11px] ${rank >= SKILL_MAX ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto_auto]"}`}
                       >
                         <SkillMark id={sk.id} />
-                        <span className="min-w-0">
-                          {sk.name}
-                          <span className="block text-[10px] text-muted">{tip}</span>
-                        </span>
+                        <span className="min-w-0 truncate">{sk.name}</span>
                         <b className="tabular-nums text-gold">{skillTier(rank)}</b>
-                        <button
-                          type="button"
-                          disabled={level < 5 || !mentored || skillPoints <= 0 || rank >= SKILL_MAX}
-                          className="h-7 w-7 rounded-md border border-border text-gold disabled:opacity-30"
-                          onClick={() => useRpg.getState().learnSkill(sk.id)}
-                        >
-                          +
-                        </button>
+                        {rank >= SKILL_MAX ? null : (
+                          <button type="button" disabled={level < 5 || !mentored || skillPoints <= 0} className="h-6 w-6 rounded-md border border-border text-gold disabled:opacity-30" onClick={() => useRpg.getState().learnSkill(sk.id)}>+</button>
+                        )}
                       </div>
                     );
                   })}
@@ -3747,57 +3921,25 @@ function Character() {
               </div>
             );
           })}
-          <div className={chosenTree ? "mt-2" : "col-span-2 mt-2"}>
-            <p className="mb-1 text-xs text-gold">At becerisi</p>
-            <div className="flex flex-col gap-1">
-              {MOUNT_SKILLS.map((sk) => {
-                const rank = mountSkills[sk.id] ?? 0;
-                return (
-                  <div
-                    key={sk.id}
-                    draggable={rank > 0}
-                    title={sk.line}
-                    onDragStart={(e) => {
-                      if (rank <= 0) {
-                        e.preventDefault();
-                        return;
-                      }
-                      e.dataTransfer.setData("text/plain", `skill:${sk.id}`);
-                      e.dataTransfer.effectAllowed = "copy";
-                    }}
-                    className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-border bg-bg/70 px-2 py-1.5 text-xs"
-                  >
-                    <SkillMark id={sk.id} />
-                    <span className="min-w-0">
-                      {sk.name}
-                      <span className="block text-[10px] text-muted">{sk.line}</span>
-                    </span>
-                    <b className="tabular-nums text-gold">{rank > 0 ? skillTier(rank) : "—"}</b>
-                  </div>
-                );
-              })}
-            </div>
-            <p className="mt-1 text-[11px] text-muted">Seyis'te kitap ile gelişir. Öğrenileni alt çubuğa sürükle. Yalnız at üzerinde basılır.</p>
-          </div>
-          <p className={chosenTree ? "text-[11px] text-muted" : "col-span-2 text-[11px] text-muted"}>İlk + bir ağacı kilitler. Öğrenileni alt çubuğa sürükle.</p>
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
           {(["str", "mag", "hp", "mana", "ats", "mvs"] as StatKey[]).map((key) => (
-            <div key={key} className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] items-center gap-2 text-sm" title={STAT_HINT[key]}>
+            <div key={key} className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] items-center gap-1.5 text-xs" title={STAT_HINT[key]}>
               <StatMark stat={key} />
               <span className="min-w-0 truncate text-fg/90">{STAT_LABEL[key]}</span>
               <b className="tabular-nums" title="Toplam">{totals[key]}</b>
               <b className="w-8 rounded border border-border text-center text-xs tabular-nums text-gold" title="Bu statüye verilen puan">{invested[key] ?? 0}</b>
-              <button type="button" disabled={unspent <= 0 || (invested[key] ?? 0) >= 90} className="h-7 w-7 rounded-md border border-border text-gold disabled:opacity-30" onClick={() => useRpg.getState().spend(key)}>
+              <button type="button" disabled={unspent <= 0 || (invested[key] ?? 0) >= 90} className="h-6 w-6 rounded-md border border-border text-gold disabled:opacity-30" onClick={() => useRpg.getState().spend(key)}>
                 +
               </button>
             </div>
           ))}
-          <p className="text-[11px] text-muted">Verilen toplam {Object.values(invested).reduce((sum, n) => sum + (n || 0), 0)} · her statü en fazla 90 · seviye tavanı 99</p>
+          <p className="text-[10px] leading-tight text-muted">Verilen toplam {Object.values(invested).reduce((sum, n) => sum + (n || 0), 0)} · her statü en fazla 90 · seviye tavanı 99</p>
         </div>
       )}
-      <div className="mt-3 flex gap-1 border-t border-border pt-2">
+      </div>
+      <div className="mt-auto flex shrink-0 gap-1 border-t border-border pt-1.5">
         {tabs.map((tab) => (
           <button
             key={tab}
@@ -3912,7 +4054,7 @@ function QuestBoard() {
           <p className="mt-2 text-muted">Bitince aynı kişiye teslim et.</p>
         </div>
       ) : locked ? (
-        <p className="text-sm text-muted">{locked.name} için seviye {locked.min} gerekir.</p>
+        <p className="text-sm text-muted">{locked.name}: görevi almak için {locked.min}. seviye olman gerekiyor.</p>
       ) : elsewhere ? (
         <p className="text-sm text-muted">{elsewhere.title} — {giverLabel(questGiver(questBoardRow(elsewhere)))} teslim alır.</p>
       ) : (
@@ -3960,13 +4102,44 @@ function GateBoard() {
 
 function StallShop() {
   const stall = useRpg((s) => s.stall) ?? [];
+  const bank = useRpg((s) => s.stallBank);
   const [pending, setPending] = useState<number | null>(null);
   const [price, setPrice] = useState("100");
   const [picked, setPicked] = useState<string | null>(null);
+  const [pulling, setPulling] = useState(false);
   const slots = Array.from({ length: 12 }, (_, i) => stall[i] ?? null);
+  const pullBank = async () => {
+    const id = useSession.getState().activeId;
+    if (!id || pulling) return;
+    setPulling(true);
+    try {
+      await syncStallMarket();
+      const res = await withdrawStallBank({ data: { id } });
+      if (!res.ok) {
+        useRpg.setState({ toast: "Kumbara alınamadı" });
+        return;
+      }
+      if (res.amount > 0) {
+        const now = useRpg.getState();
+        useRpg.setState({
+          gold: now.gold + res.amount,
+          stallBank: Math.max(0, now.stallBank - res.amount),
+          toast: `${res.amount} altın kumbaradan alındı`,
+        });
+      } else useRpg.setState({ stallBank: 0, toast: "Kumbara boş" });
+    } finally {
+      setPulling(false);
+    }
+  };
   return (
     <Shell title="Pazar" className="w-[min(22rem,92vw)]" stall>
-      <p className="mb-2 text-xs text-muted">Boş yuvaya sürükle. Fiyat penceresi açılır, Tamam deyince satışa çıkar.</p>
+      <p className="mb-2 text-xs text-muted">Boş yuvaya sürükle. Fiyat penceresi açılır, Tamam deyince satışa çıkar. Tezgah oyundan çıksan da durur.</p>
+      <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+        <span className="text-gold">Kumbara · <GoldInline n={bank} /></span>
+        <button type="button" className="rounded-md border border-gold px-2 py-1 text-gold disabled:opacity-40" disabled={bank <= 0 || pulling} onClick={() => void pullBank()}>
+          Çek
+        </button>
+      </div>
       <div className="stall-grid">
         {slots.map((row, i) => (
           <button
@@ -4051,7 +4224,7 @@ function DeathCard() {
     <div className="pointer-events-auto absolute inset-0 z-40 grid place-items-center bg-black/55 p-4" data-ui>
       <div className="w-[min(24rem,92vw)] rounded-xl border border-border bg-surface p-4 text-center">
         <p className="font-display text-lg text-gold">Yendin</p>
-        <p className="mt-1 text-sm text-muted">Burada başlarsan canın sıfırdan yavaş dolar. Köyde başlarsan bu haritanın girişine dönersin.</p>
+        <p className="mt-1 text-sm text-muted">Burada başlarsan canın 2 ve 3'er atlayarak dolar. Köyde başlarsan bu haritanın girişine dönersin.</p>
         <div className="mt-3 flex justify-center gap-2">
           <button type="button" className="rounded-md border border-gold px-3 py-2 text-sm text-gold" onClick={() => useRpg.getState().reviveHere()}>
             Burada Başla
@@ -4191,18 +4364,30 @@ function CraftShop() {
   const gold = useRpg((s) => s.gold);
   const level = useRpg((s) => s.level);
   const bag = useRpg((s) => s.bag);
-  const [klass, setKlass] = useState("hepsi");
+  const [tab, setTab] = useState("hepsi");
   const [page, setPage] = useState(0);
   const count = (id: string) => bag.reduce((sum, item) => sum + (item?.id === id ? item.count ?? 1 : 0), 0);
-  const rows = CRAFTS.filter((row) => klass === "hepsi" || row.forClass === "hepsi" || row.forClass === klass);
+  const rows = CRAFTS.filter((row) => {
+    const book = "book" in row && Boolean(row.book);
+    if (tab === "at") return book;
+    if (book) return false;
+    if (tab === "hepsi") return true;
+    return row.forClass === tab;
+  });
   const pages = Math.max(1, Math.ceil(rows.length / SHOP_PAGE));
   const safe = Math.min(page, pages - 1);
   const view = rows.slice(safe * SHOP_PAGE, safe * SHOP_PAGE + SHOP_PAGE);
   return (
     <Shell title="Üretim" className="w-[min(22rem,92vw)]">
       <p className="mb-2 text-sm text-gold"><GoldInline n={gold} /> · Sv.{level}</p>
-      <p className="mb-2 text-xs text-muted">30. seviyeden sonra maden, boss ganimeti ve altınla üretilir.</p>
-      <ClassChips value={klass} onChange={(id) => { setKlass(id); setPage(0); }} />
+      <p className="mb-2 text-xs text-muted">30. seviyeden sonra maden, boss ganimeti ve altınla üretilir. At becerileri At sekmesindedir.</p>
+      <div className="mb-2 flex flex-wrap gap-1">
+        {([["hepsi", "Hepsi"], ["savasci", "Savaşçı"], ["okcu", "Okçu"], ["buyucu", "Büyücü"], ["ninja", "Ninja"], ["at", "At"]] as const).map(([id, label]) => (
+          <button key={id} type="button" className={tab === id ? "rounded-md border border-gold px-2 py-1 text-xs text-gold" : "rounded-md border border-border px-2 py-1 text-xs text-muted"} onClick={() => { setTab(id); setPage(0); }}>
+            {label}
+          </button>
+        ))}
+      </div>
       <div className="flex flex-col gap-2 overflow-hidden">
         {view.map((row) => {
           const ores = row.ores.map((pair) => {
@@ -4436,7 +4621,7 @@ function SmithShop() {
   const item = useRpg((s) => s.smithItem);
   const stone = useRpg((s) => s.smithStone);
   const mat = useRpg((s) => s.smithMat);
-  const need = item ? matForPlus(item.plus) : null;
+  const need = item ? matForPlus(item.plus, item.slot) : null;
   const cost = item && item.plus < 10 ? (ENHANCE[item.plus] ?? 1550) : 0;
   const chance = item && item.plus < 10 ? upgradeChance(item.plus, Boolean(stone)) : 0;
   const take = (which: "item" | "stone" | "mat", raw: string) => {

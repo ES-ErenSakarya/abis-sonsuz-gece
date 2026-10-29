@@ -228,12 +228,7 @@ export function bindControlsTest() {
   };
 }
 
-let wind: AudioContext | null = null;
-let windGain: GainNode | null = null;
-
-export function setWindVolume(volume: number) {
-  if (windGain) windGain.gain.value = Math.max(0, Math.min(1, volume)) * 0.04;
-}
+export function setWindVolume(_volume: number) {}
 
 let enterGate: { name: string; where: { x?: number; z?: number } | null } | null = null;
 const enterWatch = new Set<() => void>();
@@ -289,34 +284,6 @@ export function beginPlay(where?: { x?: number; z?: number } | null) {
   state.joyX = 0;
   state.joyY = 0;
   useHud.getState().setPlaying(true);
-  if (wind) {
-    void wind.resume();
-    return;
-  }
-  const ctx = new AudioContext();
-  wind = ctx;
-  const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  let last = 0;
-  for (let i = 0; i < data.length; i++) {
-    const white = Math.random() * 2 - 1;
-    last = last * 0.98 + white * 0.02;
-    data[i] = last * 4.5;
-  }
-  const src = ctx.createBufferSource();
-  src.buffer = buffer;
-  src.loop = true;
-  const filter = ctx.createBiquadFilter();
-  filter.type = "lowpass";
-  filter.frequency.value = 380;
-  const gain = ctx.createGain();
-  windGain = gain;
-  gain.gain.value = 0.018;
-  src.connect(filter);
-  filter.connect(gain);
-  gain.connect(ctx.destination);
-  src.start();
-  void ctx.resume();
 }
 
 export function releaseMoveKeys() {

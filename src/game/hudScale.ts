@@ -1,5 +1,4 @@
 import { touchHitSize } from "@/game/touchHit";
-import { readHud } from "@/game/hudLayout";
 
 export type Corner =
   | "top-left"
@@ -139,7 +138,6 @@ export function placeWindow(pin: HudAnchor, screenW: number, screenH: number, wi
 }
 
 export function applyHudScale(screenW = window.innerWidth, screenH = window.innerHeight) {
-  const user = readHud().scale;
   const a = hudAnchors(screenW, screenH);
   const w = Math.max(1, screenW);
   const h = Math.max(1, screenH);
@@ -149,27 +147,26 @@ export function applyHudScale(screenW = window.innerWidth, screenH = window.inne
   const px = (name: string, value: number) => root.style.setProperty(name, `${Math.round(value)}px`);
   px("--hud-vitals-x", a.vitalsX * w);
   px("--hud-vitals-y", a.vitalsY * h);
-  px("--hud-vitals-w", a.vitalsW * w * user);
+  px("--hud-vitals-w", a.vitalsW * w);
   px("--hud-map-y", a.mapY * h);
-  px("--hud-map-s", a.mapS * side * user);
+  px("--hud-map-s", a.mapS * side);
   px("--hud-hotbar-b", a.hotbarBottom * h);
-  px("--hud-slot", a.slot * side * user);
+  px("--hud-slot", a.slot * side);
   px("--hud-quest-y", a.questY * h);
-  px("--hud-quest-w", a.questW * w * user);
+  px("--hud-quest-w", a.questW * w);
   px("--hud-quest-h", a.questH * h);
   px("--hud-chat-w", a.chatW * w);
   px("--hud-chat-b", a.chatBottom * h);
   px("--hud-win-w", a.winW * w);
   px("--hud-win-h", a.winH * h);
   px("--hud-win-wide", a.winWide * w);
-  px("--hud-joy", a.joy * side * user);
-  px("--hud-hit", a.hit * side * user);
+  px("--hud-joy", a.joy * side);
+  px("--hud-hit", a.hit * side);
   px("--hud-plus-w", a.plusW * w);
   px("--hud-plus-l", a.plusLeft * h);
   px("--hud-plus-r", a.plusRight * h);
   px("--hud-font", Math.max(11, Math.min(18, a.font)));
   px("--touch-hit", touchHitSize(w, h));
-  root.style.setProperty("--hud-user", String(user));
   const tight = portrait || short || w <= 1100 || h <= 680;
   const head = tight ? (portrait ? 0.3 : 0.28) : 0.08;
   const dock = tight ? (portrait ? 0.36 : 0.34) : 0.12;

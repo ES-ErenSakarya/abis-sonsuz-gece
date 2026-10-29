@@ -1,19 +1,22 @@
-export type HudId = "vitals" | "map" | "quests" | "hotbar" | "joy" | "attack" | "edge";
+export type HudId = "vitals" | "map" | "quests" | "hotbar" | "joy" | "attack" | "ride" | "edge" | "notes" | "chat";
 
-export const HUD_IDS: HudId[] = ["vitals", "map", "quests", "hotbar", "joy", "attack", "edge"];
+export const HUD_IDS: HudId[] = ["vitals", "map", "quests", "hotbar", "joy", "attack", "ride", "edge", "notes", "chat"];
 
 export const HUD_LABEL: Record<HudId, string> = {
   vitals: "Can",
   map: "Harita",
   quests: "Görevler",
   hotbar: "Kısayol",
-  joy: "Yön",
-  attack: "Saldırı",
+  joy: "Koş",
+  attack: "Vur",
+  ride: "İn",
   edge: "Menü",
+  notes: "Mesajlar",
+  chat: "Sohbet yazısı",
 };
 
 export type HudShift = { x: number; y: number };
-export type HudLayout = { scale: number; shift: Record<HudId, HudShift> };
+export type HudLayout = { scale: number; size: Record<HudId, number>; shift: Record<HudId, HudShift> };
 
 const KEY = "abis-hud";
 const blank = (): Record<HudId, HudShift> => ({
@@ -23,11 +26,27 @@ const blank = (): Record<HudId, HudShift> => ({
   hotbar: { x: 0, y: 0 },
   joy: { x: 0, y: 0 },
   attack: { x: 0, y: 0 },
+  ride: { x: 0, y: 0 },
   edge: { x: 0, y: 0 },
+  notes: { x: 0, y: 0 },
+  chat: { x: 0, y: 0 },
+});
+const one = (): Record<HudId, number> => ({
+  vitals: 1,
+  map: 1,
+  quests: 1,
+  hotbar: 1,
+  joy: 1,
+  attack: 1,
+  ride: 1,
+  edge: 1,
+  notes: 1,
+  chat: 1,
 });
 
-let layout: HudLayout = { scale: 1, shift: blank() };
+let layout: HudLayout = { scale: 1, size: one(), shift: blank() };
 let editing = false;
+let picked: HudId | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -52,6 +71,10 @@ export function hudEditing() {
   return editing;
 }
 
+export function hudPick() {
+  return picked;
+}
+
 export function subscribeHud(fn: () => void) {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -61,14 +84,16 @@ export function loadHud() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return;
-    const parsed = JSON.parse(raw) as Partial<HudLayout> & { shift?: Partial<Record<HudId, HudShift>> };
+    const parsed = JSON.parse(raw) as Partial<HudLayout> & { shift?: Partial<Record<HudId, HudShift>>; size?: Partial<Record<HudId, number>> };
     const shift = blank();
+    const shared = clampScale(parsed.scale ?? 1);
+    const size = one();
     for (const id of HUD_IDS) {
       const row = parsed.shift?.[id];
-      if (!row) continue;
-      shift[id] = { x: clampShift(row.x), y: clampShift(row.y) };
+      if (row) shift[id] = { x: clampShift(row.x), y: clampShift(row.y) };
+      size[id] = clampScale(parsed.size?.[id] ?? shared);
     }
-    layout = { scale: clampScale(parsed.scale ?? 1), shift };
+    layout = { scale: 1, size, shift };
   } catch {
     /* keep defaults */
   }
@@ -77,11 +102,13 @@ export function loadHud() {
 
 export function writeHud(next: HudLayout) {
   const shift = blank();
+  const size = one();
   for (const id of HUD_IDS) {
     const row = next.shift[id] ?? { x: 0, y: 0 };
     shift[id] = { x: clampShift(row.x), y: clampShift(row.y) };
+    size[id] = clampScale(next.size?.[id] ?? 1);
   }
-  layout = { scale: clampScale(next.scale), shift };
+  layout = { scale: 1, size, shift };
   try {
     localStorage.setItem(KEY, JSON.stringify(layout));
   } catch {
@@ -91,8 +118,16 @@ export function writeHud(next: HudLayout) {
   emit();
 }
 
-export function setHudScale(scale: number) {
-  writeHud({ ...layout, scale });
+export function setPieceScale(id: HudId, scale: number) {
+  writeHud({ ...layout, size: { ...layout.size, [id]: scale } });
+}
+
+export function pickHud(id: HudId | null) {
+  picked = id;
+  const root = document.documentElement;
+  if (id) root.setAttribute("data-hud-pick", id);
+  else root.removeAttribute("data-hud-pick");
+  emit();
 }
 
 export function nudgeHud(id: HudId, dx: number, dy: number) {
@@ -102,21 +137,31 @@ export function nudgeHud(id: HudId, dx: number, dy: number) {
 }
 
 export function resetHud() {
-  writeHud({ scale: 1, shift: blank() });
+  writeHud({ scale: 1, size: one(), shift: blank() });
+}
+
+export function resetPiece(id: HudId) {
+  writeHud({
+    ...layout,
+    size: { ...layout.size, [id]: 1 },
+    shift: { ...layout.shift, [id]: { x: 0, y: 0 } },
+  });
 }
 
 export function setHudEdit(on: boolean) {
   editing = on;
   document.documentElement.toggleAttribute("data-hud-edit", on);
-  emit();
+  if (!on) pickHud(null);
+  else emit();
 }
 
 export function applyHudLayout() {
   const root = document.documentElement;
-  root.style.setProperty("--hud-user", String(layout.scale));
+  root.style.setProperty("--hud-user", "1");
   for (const id of HUD_IDS) {
     const row = layout.shift[id];
-    root.style.setProperty(`--hud-${id}-x`, `${row.x}px`);
-    root.style.setProperty(`--hud-${id}-y`, `${row.y}px`);
+    root.style.setProperty(`--hud-shift-${id}-x`, `${row.x}px`);
+    root.style.setProperty(`--hud-shift-${id}-y`, `${row.y}px`);
+    root.style.setProperty(`--hud-size-${id}`, String(layout.size[id]));
   }
 }

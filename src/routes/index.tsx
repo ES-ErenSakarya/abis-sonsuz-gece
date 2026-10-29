@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, type ComponentType } from "react";
+import { clearChunkRetry } from "@/lib/error-component";
 import { Overlay } from "@/game/Overlay";
 
 export const Route = createFileRoute("/")({ component: Home });
@@ -7,6 +8,10 @@ export const Route = createFileRoute("/")({ component: Home });
 function Home() {
   const [Scene, setScene] = useState<ComponentType | null>(null);
   const [worldError, setWorldError] = useState(false);
+
+  useEffect(() => {
+    clearChunkRetry();
+  }, []);
 
   useEffect(() => {
     let dead = false;

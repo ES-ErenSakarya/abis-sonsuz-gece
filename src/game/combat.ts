@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { playArrow } from "@/game/audio";
 import { RANGED_HIT } from "@/game/actors";
 
 type Shot = {
@@ -146,6 +147,7 @@ export function createCombat(scene: THREE.Scene) {
     },
     fireArrow(origin: THREE.Vector3, dir: THREE.Vector3, dmg: number, crit: boolean, home = "") {
       launch(arrows, origin, dir, 26, dmg, crit, home);
+      playArrow();
     },
     fireBolt(origin: THREE.Vector3, dir: THREE.Vector3, dmg: number, crit: boolean, home = "") {
       launch(bolts, origin, dir, 16, dmg, crit, home);

@@ -1,6 +1,8 @@
 import type { Item } from "@/game/rpg";
-import { bagRoom, tryReceiveItem, useRpg } from "@/game/rpg";
+import { bagRoom, noteQuest, tryReceiveItem, useRpg } from "@/game/rpg";
 import { partyMates } from "@/game/target";
+import { useSession } from "@/game/session";
+import { buyStallItem, creditStallBank, listOpenStalls, myStall, offerStallItem, pushStall, returnStallItem, takeOwnStallItem } from "@/game/stalls";
 
 export type MobSnap = { id: string; hp: number; alive: boolean; anger: boolean; x: number; z: number };
 export type Loot = { id: string; items: Item[]; x: number; z: number; born: number };
@@ -13,6 +15,13 @@ let peers: string[] = [];
 let mobs: MobSnap[] = [];
 let loot: Loot[] = [];
 let markets: MarketBoard[] = [];
+let persisted: MarketBoard[] = [];
+let stallSync = false;
+let stallReady = false;
+let stallEpoch = 0;
+let touchedSpot = "";
+const dropping = new Set<string>();
+const reoffered = new Set<string>();
 const seen = new Set<string>();
 let sender: ((data: unknown, peerId?: string) => void) | null = null;
 const listeners = new Set<() => void>();
@@ -64,8 +73,104 @@ export function fieldLoot() {
   return loot;
 }
 
+let boardSnap: MarketBoard[] = [];
+let boardKey = "";
+
 export function marketBoards() {
-  return markets;
+  const mine = useSession.getState().activeId || "";
+  const key = `${rev}:${mine}`;
+  if (key === boardKey) return boardSnap;
+  boardKey = key;
+  const remote = persisted.filter((board) => board.id !== `db:${mine}` && board.items.length > 0);
+  const taken = new Set(remote.map((board) => board.nick));
+  const live = markets.filter((board) => !taken.has(board.nick));
+  boardSnap = [...remote, ...live];
+  return boardSnap;
+}
+
+export function resetStallSync() {
+  stallReady = false;
+  touchedSpot = "";
+  dropping.clear();
+  reoffered.clear();
+}
+
+export function noteStallEdit() {
+  stallEpoch += 1;
+}
+
+function sameStall(a: { uid: string; price: number }[] | null, b: { uid: string; price: number }[] | null) {
+  if (a == null || b == null) return a == null && b == null;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i].uid !== b[i].uid || a[i].price !== b[i].price) return false;
+  return true;
+}
+
+export async function syncStallMarket() {
+  if (stallSync) return;
+  const id = useSession.getState().activeId;
+  if (!id) return;
+  stallSync = true;
+  const epoch = stallEpoch;
+  try {
+    const [mine, open] = await Promise.all([myStall({ data: { id } }), listOpenStalls({ data: {} })]);
+    if (epoch !== stallEpoch) return;
+    if (Array.isArray(open)) {
+      persisted = open.filter((row) => row.items.length > 0);
+      publish();
+    }
+    if (!mine.ok) return;
+    const state = useRpg.getState();
+    const serverList = (mine.items || [])
+      .map((row) => ({ uid: row.uid, price: row.price, item: row.item }))
+      .filter((row) => !dropping.has(row.uid));
+    const first = !stallReady;
+    stallReady = true;
+    const bank = mine.exists ? Math.max(0, mine.bank || 0) : 0;
+    let next = state.stall;
+    let sold = 0;
+    if (!mine.exists && Array.isArray(state.stall) && state.stall.length && state.stallSpot) {
+      for (const row of state.stall) {
+        if (reoffered.has(row.uid)) continue;
+        reoffered.add(row.uid);
+        void offerStallItem({
+          data: { id, nick: state.nick, x: state.stallSpot.x, z: state.stallSpot.z, price: row.price, item: row.item },
+        });
+      }
+    } else if (Array.isArray(state.stall) || (first && mine.exists && serverList.length > 0)) {
+      const local = Array.isArray(state.stall) ? state.stall : [];
+      const serverUids = new Set(serverList.map((row) => row.uid));
+      sold = local.filter((row) => !serverUids.has(row.uid) && !dropping.has(row.uid)).length;
+      next = serverList;
+    }
+    const listedUids = new Set((Array.isArray(next) ? next : []).map((row) => row.item?.uid).filter((uid): uid is string => Boolean(uid)));
+    const bag = listedUids.size && state.bag.some((slot) => slot && listedUids.has(slot.uid))
+      ? state.bag.map((slot) => (slot && listedUids.has(slot.uid) ? null : slot))
+      : state.bag;
+    const spot = state.stallSpot || (Array.isArray(next) && mine.exists ? { x: mine.x || 0, z: mine.z || 0 } : null);
+    if (sold > 0 || bank !== state.stallBank || bag !== state.bag || !sameStall(state.stall, next) || spot !== state.stallSpot) {
+      useRpg.setState({
+        stall: next,
+        stallBank: bank,
+        stallSpot: Array.isArray(next) ? spot : state.stallSpot,
+        bag,
+        toast: sold > 0 ? `${sold === 1 ? "Bir satış" : `${sold} satış`} kumbara'ya yazıldı` : state.toast,
+      });
+      if (sold > 0) noteQuest("sale");
+    }
+    const now = useRpg.getState();
+    if (Array.isArray(now.stall) && now.stallSpot) {
+      const sig = `${now.nick}|${now.stallSpot.x}|${now.stallSpot.z}`;
+      if (sig !== touchedSpot) {
+        touchedSpot = sig;
+        await pushStall({ data: { id, nick: now.nick, x: now.stallSpot.x, z: now.stallSpot.z } });
+      }
+    }
+  } catch {
+    /* pazar sunucusu bu turda kapalı */
+  } finally {
+    stallSync = false;
+  }
 }
 
 export function broadcastStall() {
@@ -124,7 +229,7 @@ export function placeLoot(item: Item, x: number, z: number, id = `loot-${Math.ra
 }
 
 export function expireLoot(now = Date.now()) {
-  const next = loot.filter((entry) => now - (entry.born || now) < 20000);
+  const next = loot.filter((entry) => now - (entry.born || now) < 30000);
   if (next.length === loot.length) return;
   if (chestId && !next.some((entry) => entry.id === chestId)) chestId = "";
   loot = next;
@@ -259,8 +364,51 @@ export function stallViewId() {
   return stallId;
 }
 
+async function buyPersisted(boardId: string, uid: string, price: number, item?: Item | null) {
+  const characterId = boardId.startsWith("db:") ? boardId.slice(3) : "";
+  if (!characterId || pendingBuys.has(uid)) return;
+  if (!bagRoom(item)) {
+    useRpg.setState({ toast: "Envanterinde yer yok" });
+    return;
+  }
+  const state = useRpg.getState();
+  if (state.gold < price) {
+    useRpg.setState({ toast: "Yetersiz altın" });
+    return;
+  }
+  pendingBuys.set(uid, price);
+  try {
+    const res = await buyStallItem({ data: { id: characterId, uid, price } });
+    pendingBuys.delete(uid);
+    if (!res.ok || !("item" in res) || !res.item) {
+      useRpg.setState({ toast: res.ok ? "Eşya kalktı" : res.reason === "own" ? "Kendi pazarından alamazsın" : "Eşya kalktı" });
+      return;
+    }
+    useRpg.setState({ gold: Math.max(0, useRpg.getState().gold - price) });
+    if (!tryReceiveItem(res.item)) {
+      useRpg.setState({ gold: useRpg.getState().gold + price, toast: "Envanterinde yer yok" });
+      await returnStallItem({ data: { id: characterId, price, item: res.item } });
+      return;
+    }
+    noteQuest("sale");
+    persisted = persisted.map((board) =>
+      board.id === boardId ? { ...board, items: board.items.filter((row) => row.uid !== uid) } : board,
+    ).filter((board) => board.items.length > 0);
+    publish();
+    useRpg.setState({ toast: `${res.item.name} satın alındı` });
+  } catch {
+    pendingBuys.delete(uid);
+    useRpg.setState({ toast: "Pazar yanıt vermedi" });
+  }
+}
+
 export function askStallBuy(peerId: string, uid: string, price: number, item?: Item | null) {
   const cost = Math.max(1, Math.floor(price));
+  const saved = persisted.find((board) => board.id === peerId || board.items.some((row) => row.uid === uid));
+  if (peerId.startsWith("db:") || saved?.id.startsWith("db:")) {
+    void buyPersisted(peerId.startsWith("db:") ? peerId : saved!.id, uid, cost, item);
+    return;
+  }
   if (!peerId || !uid || pendingBuys.has(uid)) return;
   if (!bagRoom(item)) {
     useRpg.setState({ toast: "Envanterinde yer yok" });
@@ -385,9 +533,25 @@ export function ingestField(from: string, data: unknown) {
   if (row.kind === "stallbuy") {
     const uid = typeof row.uid === "string" ? row.uid : "";
     const price = Math.max(1, Math.floor(Number(row.price) || 0));
+    if (uid) dropping.add(uid);
     const sold = uid ? useRpg.getState().fulfillStall(uid, price) : null;
-    if (!sold) sender?.({ kind: "stalldeny", uid }, from);
-    else sender?.({ kind: "stallgrant", uid, item: sold.item, price: sold.price }, from);
+    if (!sold) {
+      if (uid) dropping.delete(uid);
+      sender?.({ kind: "stalldeny", uid }, from);
+    } else {
+      sender?.({ kind: "stallgrant", uid, item: sold.item, price: sold.price }, from);
+      const id = useSession.getState().activeId;
+      if (id) {
+        void takeOwnStallItem({ data: { id, uid } }).then(async (taken) => {
+          if (!taken.item) return null;
+          return creditStallBank({ data: { id, amount: sold.price } });
+        }).then((res) => {
+          if (res?.ok) useRpg.setState({ stallBank: res.bank });
+        }).finally(() => {
+          if (uid) dropping.delete(uid);
+        });
+      } else if (uid) dropping.delete(uid);
+    }
     return true;
   }
   if (row.kind === "stalldeny") {

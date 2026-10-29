@@ -1,5 +1,6 @@
 // @ts-nocheck
 import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { weaponStyleOf } from "@/game/rpg";
 import { DUNGEON_BOUND, REALMS, VILLAGE_BOUND } from "@/game/world";
 
@@ -1354,9 +1355,13 @@ function paintPlus(root, plus) {
 	const glow = Math.min(1, Math.max(0, Number(plus) || 0) / 10);
 	if (!root || glow <= 0) return;
 	root.traverse((obj) => {
-		if (!obj.isMesh || !obj.material || !obj.material.emissive) return;
-		obj.material.emissive.set(glow > 0.85 ? "#fff1c2" : glow > 0.55 ? "#7ec8ff" : "#3a6ea5");
-		obj.material.emissiveIntensity = 0.12 + glow * 1.25;
+		if (!obj.isMesh || !obj.material) return;
+		const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+		for (const mat of mats) {
+			if (!mat || !mat.emissive) continue;
+			mat.emissive.set(glow > 0.85 ? "#fff1c2" : glow > 0.55 ? "#7ec8ff" : "#3a6ea5");
+			mat.emissiveIntensity = 0.18 + glow * 0.9;
+		}
 	});
 }
 function gearHash(id) {
@@ -1365,7 +1370,338 @@ function gearHash(id) {
 	for (let i = 0; i < text.length; i++) n = (n * 33 + text.charCodeAt(i)) >>> 0;
 	return n;
 }
-export function weaponMesh(style, seed = 0, plus = 0) {
+let leafTemplate = null;
+let leafTask = null;
+const leafWaiters = new Set();
+
+function hunterBlade(id, name) {
+	const key = String(id || "").toLocaleLowerCase("tr").trim();
+	const label = String(name || "").toLocaleLowerCase("tr").replace(/\s*\+\s*\d+\s*$/, "").trim();
+	if (key === "sword-av" || key.startsWith("sword-av+") || key.startsWith("sword-av-") || key.startsWith("sword-av_")) return true;
+	if (label === "avcı kılıcı" || label === "avci kilici" || label === "avcı kilici") return true;
+	if (key.includes("avcı-kılıcı") || key.includes("avci-kilici") || key.includes("avci-kilic")) return true;
+	return false;
+}
+
+function cloudPoints(root) {
+	const pts = [];
+	root.updateMatrixWorld(true);
+	root.traverse((obj) => {
+		if (!obj.isMesh || !obj.geometry?.attributes?.position) return;
+		const pos = obj.geometry.attributes.position;
+		const v = new THREE.Vector3();
+		for (let i = 0; i < pos.count; i++) {
+			v.fromBufferAttribute(pos, i).applyMatrix4(obj.matrixWorld);
+			pts.push(v.clone());
+		}
+	});
+	return pts;
+}
+
+function swordAxis(pts) {
+	const mean = new THREE.Vector3();
+	for (const p of pts) mean.add(p);
+	mean.multiplyScalar(1 / Math.max(1, pts.length));
+	let xx = 0, yy = 0, zz = 0, xy = 0, xz = 0, yz = 0;
+	for (const p of pts) {
+		const x = p.x - mean.x, y = p.y - mean.y, z = p.z - mean.z;
+		xx += x * x; yy += y * y; zz += z * z; xy += x * y; xz += x * z; yz += y * z;
+	}
+	const ax = new THREE.Vector3(0, 1, 0);
+	for (let i = 0; i < 28; i++) {
+		ax.set(xx * ax.x + xy * ax.y + xz * ax.z, xy * ax.x + yy * ax.y + yz * ax.z, xz * ax.x + yz * ax.y + zz * ax.z);
+		if (ax.lengthSq() < 1e-8) break;
+		ax.normalize();
+	}
+	return ax;
+}
+
+function endRadius(pts, ax, lo, hi) {
+	const sel = [];
+	for (const p of pts) {
+		const t = p.dot(ax);
+		if (t >= lo && t < hi) sel.push(p);
+	}
+	if (sel.length < 3) return 1;
+	const c = new THREE.Vector3();
+	for (const p of sel) c.add(p);
+	c.multiplyScalar(1 / sel.length);
+	let r = 0;
+	for (const p of sel) {
+		const d = p.clone().sub(c);
+		const along = d.dot(ax);
+		r += Math.sqrt(Math.max(0, d.lengthSq() - along * along));
+	}
+	return r / sel.length;
+}
+
+function fitLeafSword(scene) {
+	const raw = cloudPoints(scene);
+	let ax = swordAxis(raw);
+	let tmin = Infinity;
+	let tmax = -Infinity;
+	const ts = raw.map((p) => {
+		const t = p.dot(ax);
+		tmin = Math.min(tmin, t);
+		tmax = Math.max(tmax, t);
+		return t;
+	});
+	const span = Math.max(0.001, tmax - tmin);
+	if (endRadius(raw, ax, tmax - span * 0.28, tmax + 0.01) < endRadius(raw, ax, tmin, tmin + span * 0.28)) ax.negate();
+	const spin = new THREE.Group();
+	spin.add(scene);
+	spin.quaternion.setFromUnitVectors(ax.clone().normalize(), new THREE.Vector3(0, 1, 0));
+	let pts = cloudPoints(spin);
+	let minY = Infinity;
+	let maxY = -Infinity;
+	for (const p of pts) {
+		minY = Math.min(minY, p.y);
+		maxY = Math.max(maxY, p.y);
+	}
+	const bins = 28;
+	const slices = Array.from({ length: bins }, () => []);
+	for (const p of pts) {
+		const b = Math.min(bins - 1, Math.max(0, Math.floor(((p.y - minY) / (maxY - minY || 1)) * bins)));
+		slices[b].push(p);
+	}
+	const info = slices.map((arr, i) => {
+		if (arr.length < 2) return null;
+		const c = new THREE.Vector3();
+		for (const p of arr) c.add(p);
+		c.multiplyScalar(1 / arr.length);
+		let r = 0;
+		for (const p of arr) r += Math.hypot(p.x - c.x, p.z - c.z);
+		return { y: minY + (i + 0.5) * (maxY - minY) / bins, n: arr.length, r: r / arr.length };
+	}).filter(Boolean);
+	const handle = info.filter((s) => s.y < minY + (maxY - minY) * 0.45);
+	const gripR = handle.reduce((m, s) => Math.min(m, s.r), 1);
+	const guard = info.find((s) => s.y > minY + (maxY - minY) * 0.18 && s.r > gripR * 3.2 && s.n > 8);
+	const guardY = guard ? guard.y : minY + (maxY - minY) * 0.42;
+	const blade = pts.filter((p) => p.y > guardY && p.y < maxY - (maxY - minY) * 0.08);
+	let vx = 0;
+	let vz = 0;
+	const bc = new THREE.Vector3();
+	for (const p of blade) bc.add(p);
+	if (blade.length) bc.multiplyScalar(1 / blade.length);
+	for (const p of blade) {
+		vx += (p.x - bc.x) ** 2;
+		vz += (p.z - bc.z) ** 2;
+	}
+	if (vz > vx) spin.rotateY(Math.PI / 2);
+	pts = cloudPoints(spin);
+	minY = Infinity;
+	maxY = -Infinity;
+	for (const p of pts) {
+		minY = Math.min(minY, p.y);
+		maxY = Math.max(maxY, p.y);
+	}
+	const gripPts = pts.filter((p) => p.y < guardY - (maxY - minY) * 0.03 && p.y > minY + (maxY - minY) * 0.04);
+	const gc = new THREE.Vector3();
+	for (const p of gripPts) gc.add(p);
+	if (gripPts.length) gc.multiplyScalar(1 / gripPts.length);
+	let scale = 0.014 / Math.max(0.008, gripR);
+	let length = (maxY - minY) * scale;
+	if (length > 1.02) {
+		scale *= 1.02 / length;
+		length = 1.02;
+	}
+	if (length < 0.72) scale *= 0.82 / length;
+	if (!Number.isFinite(scale) || scale < 0.02 || scale > 8) scale = 0.28;
+	spin.scale.setScalar(scale);
+	const px = -gc.x * scale;
+	const py = 0.09 - guardY * scale;
+	const pz = -gc.z * scale;
+	spin.position.set(Number.isFinite(px) ? px : 0, Number.isFinite(py) ? py : 0.05, Number.isFinite(pz) ? pz : 0);
+	spin.traverse((obj) => {
+		if (!obj.isMesh) return;
+		obj.castShadow = true;
+		obj.frustumCulled = false;
+		obj.matrixAutoUpdate = true;
+	});
+	return spin;
+}
+
+function stripLeafImages(buffer) {
+	const view = new DataView(buffer);
+	const jsonLen = view.getUint32(12, true);
+	const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 20, jsonLen)));
+	for (const mat of json.materials || []) {
+		delete mat.emissiveTexture;
+		delete mat.normalTexture;
+		delete mat.occlusionTexture;
+		delete mat.extensions;
+		if (mat.pbrMetallicRoughness) {
+			delete mat.pbrMetallicRoughness.baseColorTexture;
+			delete mat.pbrMetallicRoughness.metallicRoughnessTexture;
+			mat.pbrMetallicRoughness.baseColorFactor = [0.86, 0.78, 0.48, 1];
+			mat.pbrMetallicRoughness.metallicFactor = 0.12;
+			mat.pbrMetallicRoughness.roughnessFactor = 0.42;
+		}
+	}
+	delete json.textures;
+	delete json.images;
+	delete json.samplers;
+	delete json.extensionsUsed;
+	delete json.extensionsRequired;
+	const jsonChunk = new TextEncoder().encode(JSON.stringify(json));
+	const pad = (4 - (jsonChunk.length % 4)) % 4;
+	const padded = new Uint8Array(jsonChunk.length + pad);
+	padded.set(jsonChunk);
+	padded.fill(32, jsonChunk.length);
+	const binLenAt = 20 + jsonLen;
+	const binLen = view.getUint32(binLenAt, true);
+	const bin = new Uint8Array(buffer, binLenAt + 8, binLen);
+	const total = 12 + 8 + padded.length + 8 + bin.length;
+	const out = new ArrayBuffer(total);
+	const dv = new DataView(out);
+	dv.setUint32(0, 0x46546c67, true);
+	dv.setUint32(4, 2, true);
+	dv.setUint32(8, total, true);
+	dv.setUint32(12, padded.length, true);
+	dv.setUint32(16, 0x4e4f534a, true);
+	new Uint8Array(out, 20, padded.length).set(padded);
+	const binOff = 20 + padded.length;
+	dv.setUint32(binOff, bin.length, true);
+	dv.setUint32(binOff + 4, 0x004e4942, true);
+	new Uint8Array(out, binOff + 8, bin.length).set(bin);
+	return out;
+}
+
+function bakeFittedMesh(root) {
+	root.updateMatrixWorld(true);
+	const positions = [];
+	const normals = [];
+	const indices = [];
+	const v = new THREE.Vector3();
+	const n = new THREE.Vector3();
+	const nm = new THREE.Matrix3();
+	root.traverse((obj) => {
+		if (!obj.isMesh || !obj.geometry?.attributes?.position) return;
+		const pos = obj.geometry.attributes.position;
+		const nor = obj.geometry.attributes.normal;
+		nm.getNormalMatrix(obj.matrixWorld);
+		const base = positions.length / 3;
+		for (let i = 0; i < pos.count; i++) {
+			v.fromBufferAttribute(pos, i).applyMatrix4(obj.matrixWorld);
+			positions.push(v.x, v.y, v.z);
+			if (nor) {
+				n.fromBufferAttribute(nor, i).applyMatrix3(nm).normalize();
+				normals.push(n.x || 0, n.y || 1, n.z || 0);
+			}
+		}
+		const index = obj.geometry.index;
+		if (index) {
+			for (let i = 0; i < index.count; i++) indices.push(index.getX(i) + base);
+		} else {
+			for (let i = 0; i < pos.count; i++) indices.push(base + i);
+		}
+	});
+	const geo = new THREE.BufferGeometry();
+	geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+	if (normals.length === positions.length) geo.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+	else geo.computeVertexNormals();
+	if (indices.length) geo.setIndex(indices);
+	geo.computeBoundingSphere();
+	const mat = new THREE.MeshStandardMaterial({
+		color: "#efe4bc",
+		roughness: 0.4,
+		metalness: 0.18,
+		emissive: "#9aaf72",
+		emissiveIntensity: 0.55,
+		side: THREE.DoubleSide
+	});
+	const mesh = new THREE.Mesh(geo, mat);
+	mesh.name = "leaf-baked";
+	mesh.frustumCulled = false;
+	mesh.castShadow = false;
+	mesh.renderOrder = 0;
+	return mesh;
+}
+
+function tintLeaf(root, plus) {
+	const glow = Math.min(1, Math.max(0, Number(plus) || 0) / 10);
+	root.traverse((obj) => {
+		if (!obj.isMesh || !obj.material || obj.material.emissive == null) return;
+		const mat = obj.material.clone();
+		mat.emissive.set(glow > 0.85 ? "#fff1c2" : glow > 0.45 ? "#b7dcff" : "#e7eed8");
+		mat.emissiveIntensity = 0.32 + glow * 0.85;
+		obj.material = mat;
+		obj.frustumCulled = false;
+		obj.castShadow = true;
+	});
+}
+
+function mountLeaf(g, template, plus) {
+	if (!g || !template || g.getObjectByName("leaf-model")) return;
+	const stand = g.getObjectByName("leaf-standin");
+	if (stand) g.remove(stand);
+	const clone = template.clone(true);
+	clone.name = "leaf-model";
+	clone.traverse((obj) => {
+		obj.matrixAutoUpdate = true;
+		obj.frustumCulled = false;
+	});
+	tintLeaf(clone, plus);
+	g.add(clone);
+}
+
+function loadLeaf() {
+	if (leafTemplate) return Promise.resolve(leafTemplate);
+	if (leafTask) return leafTask;
+	leafTask = fetch("/models/leaf-sword.glb")
+		.then((res) => {
+			if (!res.ok) throw new Error("leaf sword " + res.status);
+			return res.arrayBuffer();
+		})
+		.then((buffer) => new Promise((resolve, reject) => {
+			const loader = new GLTFLoader();
+			loader.parse(stripLeafImages(buffer), "", resolve, reject);
+		}))
+		.then((gltf) => {
+			const fitted = fitLeafSword(gltf.scene);
+			leafTemplate = bakeFittedMesh(fitted);
+			fitted.traverse((obj) => {
+				if (obj.isMesh) {
+					obj.geometry?.dispose?.();
+					const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+					for (const mat of mats) mat?.dispose?.();
+				}
+			});
+			for (const waiter of leafWaiters) mountLeaf(waiter.group, leafTemplate, waiter.plus);
+			leafWaiters.clear();
+			return leafTemplate;
+		})
+		.catch((err) => {
+			console.error(err);
+			leafTask = null;
+			return null;
+		});
+	return leafTask;
+}
+
+function leafSwordMesh(plus) {
+	const g = new THREE.Group();
+	g.name = "leaf-sword";
+	g.userData.kind = "sword";
+	g.frustumCulled = false;
+	g.position.set(0, 0.02, 0.016);
+	const level = Math.max(0, Math.min(10, Math.floor(Number(plus) || 0)));
+	if (leafTemplate) mountLeaf(g, leafTemplate, level);
+	else {
+		const waiter = { group: g, plus: level };
+		leafWaiters.add(waiter);
+		void loadLeaf().then((template) => {
+			leafWaiters.delete(waiter);
+			if (template) mountLeaf(g, template, level);
+		});
+	}
+	return g;
+}
+
+if (typeof window !== "undefined") void loadLeaf();
+
+export function weaponMesh(style, seed = 0, plus = 0, id = "", name = "") {
+	if (style === "sword" && hunterBlade(id, name)) return leafSwordMesh(plus);
 	const g = new THREE.Group();
 	const v = Math.abs(Math.floor(Number(seed) || 0)) % 5;
 	const steelTint = ["#d5dbe3", "#c9a36a", "#9eb0c4", "#f4f7fb", "#8d9aa8"][v];
@@ -1610,8 +1946,9 @@ var GOLD = "#8a7a40";
 export function syncGear(model, equipped) {
 	const store = model.userData.gear ??= {};
 	const weaponId = itemId(equipped.weapon);
+	const weaponName = equipped.weapon && typeof equipped.weapon === "object" && typeof equipped.weapon.name === "string" ? equipped.weapon.name : "";
 	const style = weaponStyleOf(weaponId);
-	const wsig = `${weaponId}:${equipped.weapon?.plus || 0}`;
+	const wsig = `${weaponId}:${equipped.weapon?.plus || 0}${hunterBlade(weaponId, weaponName) ? ":leaf3" : ""}`;
 	const dropPiece = (slot) => {
 		const piece = store[slot];
 		if (!piece) return;
@@ -1655,7 +1992,7 @@ export function syncGear(model, equipped) {
 	}
 	const make = (slot) => {
 		if (slot === "weapon") {
-			const g = weaponMesh(style, gearHash(weaponId), equipped.weapon?.plus || 0);
+			const g = weaponMesh(style, gearHash(weaponId), equipped.weapon?.plus || 0, weaponId, weaponName);
 			g.userData.kind = style;
 			g.userData.sig = `${weaponId}:${equipped.weapon?.plus || 0}`;
 			if (style === "bow") g.userData.straight = 1;
@@ -1773,7 +2110,7 @@ export function syncGear(model, equipped) {
 			return;
 		}
 		const on = Boolean(equipped[slot]);
-		const sig = on ? `${equipped[slot].id}:${equipped[slot].plus || 0}` : "";
+		const sig = on ? `${equipped[slot].id}:${equipped[slot].plus || 0}${slot === "weapon" && hunterBlade(equipped[slot].id, equipped[slot].name) ? ":leaf3" : ""}` : "";
 		if (on && store[slot] && store[slot].userData.sig && store[slot].userData.sig !== sig) dropPiece(slot);
 		const wearable = slot === "weapon" || slot === "armor" || slot === "boots";
 		if (on && !store[slot] && !(model.userData.classMesh && !wearable)) {

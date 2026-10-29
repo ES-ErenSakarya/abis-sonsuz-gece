@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import * as THREE from "three";
+import { createClassAvatar, syncGear } from "@/game/actors";
+import { captureRest, poseFighter, type WeaponStyle } from "@/game/warrior";
 import { useNavigate } from "@tanstack/react-router";
 import { GROK_PROVIDERS, authClient, signIn } from "@/lib/auth/client";
 import { UserButton } from "@/lib/auth/gates";
@@ -13,8 +16,10 @@ import {
   type CharacterRow,
 } from "@/game/account";
 import { armEnter, peekEnter } from "@/game/input";
+import { primeMenuMusic, syncMenuMusic } from "@/game/audio";
+import { resetStallSync } from "@/game/field";
 import { useHud } from "@/game/hudStore";
-import { applySave, captureSave, CLASS_LIST, className, type ClassId } from "@/game/rpg";
+import { applySave, captureSave, CLASS_LIST, className, weaponStyleOf, type ClassId, type Item } from "@/game/rpg";
 import { useSession } from "@/game/session";
 
 const field = "mt-1 w-full rounded-md border border-border bg-bg px-3 py-2 text-base text-fg";
@@ -29,10 +34,10 @@ const CLASS_TONE: Record<ClassId, string> = {
   ninja: "#c9a15b",
 };
 
-function ClassSigil({ id }: { id: ClassId }) {
+function ClassSigil({ id, big = false }: { id: ClassId; big?: boolean }) {
   const tone = CLASS_TONE[id] ?? "#c9a15b";
   return (
-    <svg viewBox="0 0 32 32" className="h-8 w-8 shrink-0" aria-hidden="true">
+    <svg viewBox="0 0 32 32" className={big ? "char-sigil" : "h-8 w-8 shrink-0"} aria-hidden="true">
       <circle cx="16" cy="16" r="13.2" fill="#141210" stroke={tone} strokeWidth="1.4" />
       {id === "savasci" ? <path d="M16 6.5 18.4 22h-4.8L16 6.5ZM9.5 24.5h13" fill={tone} stroke={tone} strokeWidth="1.2" /> : null}
       {id === "okcu" ? <path d="M7 16c4-8 14-8 18 0-4 8-14 8-18 0Zm9-6v12" fill="none" stroke={tone} strokeWidth="1.5" /> : null}
@@ -156,7 +161,7 @@ export function AuthScreens() {
   };
 
   return (
-    <section className="menu-card w-full max-w-md rounded-3xl border border-border bg-surface p-4 text-fg">
+    <section className="menu-card max-h-[90dvh] w-full max-w-md overflow-auto rounded-3xl border border-border bg-surface p-4 text-fg" onPointerDown={() => primeMenuMusic()}>
       <p className="text-xs tracking-[0.22em] text-muted">MMORPG</p>
       <h1 className="mt-2 font-display text-3xl font-medium leading-tight text-fg">Abis: Sonsuz Gece</h1>
       <p className="mt-2 text-sm text-muted">Aynı köyde başkaları da yürür. Hesabın ve karakterlerin sende kalır.</p>
@@ -234,6 +239,7 @@ export function CharacterScreens() {
   const [klass, setKlass] = useState<ClassId>("savasci");
   const [deleting, setDeleting] = useState<CharacterRow | null>(null);
   const [wipe, setWipe] = useState("");
+  const [pickedId, setPickedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const reload = async () => {
@@ -264,6 +270,11 @@ export function CharacterScreens() {
   const playing = useHud((s) => s.playing);
   const ready = useHud((s) => s.ready);
   const seenPlay = useRef(false);
+  useLayoutEffect(() => {
+    if (playing) return;
+    syncMenuMusic(true);
+    return () => syncMenuMusic(false);
+  }, [playing]);
   useEffect(() => {
     if (playing) {
       seenPlay.current = true;
@@ -283,6 +294,7 @@ export function CharacterScreens() {
   }, [playing]);
   const play = (row: CharacterRow) => {
     if (!useHud.getState().ready || peekEnter()) return;
+    resetStallSync();
     applySave(row);
     useSession.getState().enter(row.id);
     armEnter(row.name, { x: row.x, z: row.z });
@@ -329,13 +341,12 @@ export function CharacterScreens() {
   };
 
   return (
-    <section className="menu-card relative max-h-[90dvh] w-full max-w-3xl overflow-auto rounded-3xl border border-gold/40 bg-surface p-5 text-fg shadow-[0_28px_70px_rgba(8,7,6,0.55)]">
-      <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-gold to-transparent" />
+    <section className="char-pick menu-card relative text-fg" onPointerDown={() => syncMenuMusic(true)}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs tracking-[0.28em] text-gold">ABİS · SONSUZ GECE</p>
           <h1 className="mt-1 font-display text-3xl text-fg">Karakter seç</h1>
-          <p className="mt-1 text-sm text-muted">Altı yuva. Bir isim bir kez yaşar.</p>
+          <p className="mt-1 text-sm text-muted">Dört yuva. Bir isim bir kez yaşar.</p>
         </div>
         <UserButton />
       </div>
@@ -359,7 +370,8 @@ export function CharacterScreens() {
           </label>
           <input id="char-name" value={name} maxLength={16} className={field} onChange={(e) => setName(e.target.value)} />
           <p className="mt-4 text-sm text-muted">Sınıf</p>
-          <div className="mt-2 grid grid-cols-2 gap-2">
+          <div className="mt-2 grid grid-cols-[minmax(0,1fr)_minmax(9rem,42%)] gap-2">
+            <div className="grid grid-cols-1 gap-2">
             {CLASS_LIST.map((row) => (
               <button
                 key={row.id}
@@ -374,6 +386,8 @@ export function CharacterScreens() {
                 </span>
               </button>
             ))}
+            </div>
+            <CharDoll classId={klass} />
           </div>
           <p className="mt-2 text-xs text-muted">Başlangıç silahı köydeki sandıktan çıkar. Otomatik kuşanılmaz.</p>
           <div className="mt-4 flex gap-2">
@@ -417,44 +431,184 @@ export function CharacterScreens() {
           ) : null}
         </div>
       ) : (
-        <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {Array.from({ length: 6 }, (_, slot) => {
-            const row = rows?.find((item) => item.slot === slot);
-            if (!row) {
+        <div className="char-pick-body">
+          <div className="char-pick-list">
+            {(() => {
+              const extra = rows.filter((item) => item.slot >= 4).map((item) => item.slot);
+              return [...Array.from({ length: 4 }, (_, slot) => slot), ...extra];
+            })().map((slot) => {
+              const row = rows.find((item) => item.slot === slot);
+              const on = !!row && row.id === pickedId;
+              if (!row) {
+                return (
+                  <button key={slot} type="button" className="char-slot is-empty" onClick={() => {
+                    setPickedId(null);
+                    const used = new Set(rows.map((item) => item.slot));
+                    let next = 0;
+                    while (used.has(next)) next += 1;
+                    setCreating(next);
+                  }}>
+                    <span>YUVA {slot + 1}</span>
+                    <b>Boş mühür</b>
+                  </button>
+                );
+              }
               return (
-                <button key={slot} type="button" className="flex min-h-28 flex-col justify-between rounded-2xl border border-dashed border-gold/35 bg-bg/70 px-4 py-3 text-left" onClick={() => setCreating(slot)}>
-                  <span className="text-xs tracking-widest text-muted">YUVA {slot + 1}</span>
-                  <span className="text-sm text-gold">Boş mühür · yeni karakter</span>
+                <button key={row.id} type="button" className={on ? "char-slot is-on" : "char-slot"} onClick={() => setPickedId(row.id)}>
+                  <ClassSigil id={row.classId} />
+                  <span>
+                    <span className="char-slot-k">YUVA {slot + 1}</span>
+                    <b>{row.name}</b>
+                    <span className="char-slot-m">Sv. {row.level} · {className(row.classId)}</span>
+                  </span>
                 </button>
               );
-            }
-            return (
-              <div key={row.id} className="flex min-h-28 flex-col rounded-2xl border border-border bg-bg/80 px-4 py-3" style={{ boxShadow: `inset 3px 0 0 ${CLASS_TONE[row.classId] ?? "#c9a15b"}` }}>
-                <div className="flex items-center gap-3">
-                  <ClassSigil id={row.classId} />
-                  <div className="min-w-0">
-                    <p className="text-[10px] tracking-widest text-muted">YUVA {slot + 1}</p>
-                    <p className="truncate text-lg text-fg">{row.name}</p>
-                    <p className="text-sm text-gold">Sv. {row.level} · {className(row.classId)}</p>
-                  </div>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <button type="button" className={primary} disabled={!ready} onClick={() => play(row)}>
-                    {ready ? "Giriş Yap" : "Dünya yerleşiyor"}
-                  </button>
-                  <button type="button" className={ghost} onClick={() => setDeleting(row)}>
-                    Sil
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+            })}
+          </div>
+          <CharPreview
+            row={rows.find((item) => item.id === pickedId) ?? null}
+            ready={ready}
+            onPlay={play}
+            onDelete={(row) => {
+              setWipe("");
+              setDeleting(row);
+            }}
+          />
         </div>
       )}
       {error && rows !== null ? <p className="mt-3 text-sm text-hp">{error}</p> : null}
       {!needsPassword && creating == null && !deleting ? <ChangeDeletePassword /> : null}
     </section>
   );
+}
+
+function CharPreview({
+  row,
+  ready,
+  onPlay,
+  onDelete,
+}: {
+  row: CharacterRow | null;
+  ready: boolean;
+  onPlay: (row: CharacterRow) => void;
+  onDelete: (row: CharacterRow) => void;
+}) {
+  if (!row) {
+    return (
+      <div className="char-preview is-empty">
+        <p>Soldan bir karakter seç.</p>
+        <p>Boş yuvaya basınca yeni karakter açılır.</p>
+      </div>
+    );
+  }
+  const info = CLASS_LIST.find((item) => item.id === row.classId);
+  return (
+    <div className="char-preview" style={{ boxShadow: `inset 0 0 0 1px ${CLASS_TONE[row.classId] ?? "#c9a15b"}` }}>
+      <div>
+        <p className="char-preview-name">{row.name}</p>
+        <p className="char-preview-meta">Sv. {row.level} · {className(row.classId)}</p>
+        <p className="char-preview-line">{info ? `${info.arm} · ${info.line}` : ""}</p>
+        <div className="mt-4 flex gap-2">
+          <button type="button" className={primary} disabled={!ready} onClick={() => onPlay(row)}>
+            {ready ? "Giriş Yap" : "Dünya yerleşiyor"}
+          </button>
+          <button type="button" className={ghost} onClick={() => onDelete(row)}>
+            Sil
+          </button>
+        </div>
+      </div>
+      <CharDoll
+        classId={row.classId}
+        equipped={row.equipped}
+        gearKey={`${row.id}:${row.classId}:${row.equipped?.weapon?.id ?? ""}:${row.equipped?.armor?.id ?? ""}:${row.equipped?.helmet?.id ?? ""}:${row.equipped?.boots?.id ?? ""}`}
+      />
+    </div>
+  );
+}
+
+function CharDoll({ classId, equipped, gearKey = "" }: { classId: ClassId; equipped?: Record<string, Item | null> | null; gearKey?: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  const gear = equipped;
+  useEffect(() => {
+    const el = host.current;
+    if (!el) return;
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.setClearColor(0x000000, 0);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(28, 1, 0.05, 40);
+    scene.add(new THREE.AmbientLight(0xfff6ea, 0.95));
+    const sun = new THREE.DirectionalLight(0xfff2dc, 1.55);
+    sun.position.set(2.6, 4.4, 3.1);
+    scene.add(sun);
+    const fill = new THREE.DirectionalLight(0xb9d4ff, 0.4);
+    fill.position.set(-2.4, 1.8, -1.2);
+    scene.add(fill);
+    const avatar = createClassAvatar(classId);
+    if (gear) syncGear(avatar, gear);
+    const rest = captureRest(avatar);
+    const style: WeaponStyle = gear?.weapon ? weaponStyleOf(gear.weapon.id) : "fist";
+    scene.add(avatar);
+    const floor = new THREE.Mesh(
+      new THREE.CircleGeometry(0.72, 40),
+      new THREE.MeshBasicMaterial({ color: 0xc9a15b, transparent: true, opacity: 0.22, depthWrite: false }),
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0.012;
+    scene.add(floor);
+    let framed = false;
+    const frameCamera = () => {
+      avatar.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(avatar);
+      if (box.isEmpty()) return;
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const vFov = (camera.fov * Math.PI) / 180;
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * Math.max(0.2, camera.aspect));
+      const distY = size.y / 2 / Math.tan(vFov / 2);
+      const distX = Math.max(size.x, size.z) / 2 / Math.tan(hFov / 2);
+      const dist = Math.max(distX, distY, 1.2) * 1.22;
+      camera.position.set(center.x, center.y + size.y * 0.02, center.z + dist);
+      camera.lookAt(center.x, center.y, center.z);
+      camera.updateProjectionMatrix();
+      framed = true;
+    };
+    const fit = () => {
+      const w = Math.max(1, el.clientWidth);
+      const h = Math.max(1, el.clientHeight);
+      renderer.setSize(w, h, false);
+      camera.aspect = w / Math.max(1, h);
+      camera.updateProjectionMatrix();
+      framed = false;
+    };
+    fit();
+    let raf = 0;
+    let life = 0;
+    const loop = () => {
+      life += 0.016;
+      poseFighter(avatar, rest, { moving: false, run: 0, cycle: life * 0.35, time: life, swing: 0, side: 1, armed: style !== "fist", style, combo: 1, mounted: false });
+      avatar.rotation.y = Math.PI + life * 0.28;
+      if (!framed) frameCamera();
+      renderer.render(scene, camera);
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    const watch = new ResizeObserver(fit);
+    watch.observe(el);
+    el.replaceChildren(renderer.domElement);
+    return () => {
+      cancelAnimationFrame(raf);
+      watch.disconnect();
+      renderer.dispose();
+      avatar.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+      });
+      el.replaceChildren();
+    };
+  }, [classId, gearKey]);
+  return <div className="char-doll" ref={host} />;
 }
 
 function ChangeDeletePassword() {
